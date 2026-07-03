@@ -9,11 +9,10 @@
 新手推荐直接执行交互式安装向导：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wstimin/3-xuiguanli-shangye/main/install.sh -o install.sh
-REPO_URL=https://github.com/wstimin/3-xuiguanli-shangye.git bash install.sh
+curl -fsSL https://raw.githubusercontent.com/wstimin/3-xuiguanli-shangye/main/install.sh -o install.sh && bash install.sh
 ```
 
-说明：交互式安装请使用上面这种“先下载、再执行”的方式，这样脚本才能正常接收你的选项。
+脚本已内置默认 GitHub 仓库地址，会自动检查并安装 `curl`、`git`、Node.js 20、数据库、Nginx 和证书工具。执行后按提示选择即可。
 
 脚本会按顺序询问：
 

@@ -2,11 +2,12 @@
 set -euo pipefail
 
 APP_NAME="${APP_NAME:-shiye-management-system}"
-INSTALLER_VERSION="2026-07-04-3"
+INSTALLER_VERSION="2026-07-04-4"
+DEFAULT_REPO_URL="https://github.com/wstimin/3-xuiguanli-shangye.git"
 APP_DIR="${APP_DIR:-/opt/shiye-management-system}"
 PORT="${PORT:-3388}"
 ADMIN_PATH="${ADMIN_PATH:-/admin}"
-REPO_URL="${REPO_URL:-}"
+REPO_URL="${REPO_URL:-${DEFAULT_REPO_URL}}"
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 ENV_FILE="/etc/default/${APP_NAME}"
 INTERACTIVE="${INTERACTIVE:-auto}"
@@ -28,6 +29,16 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "请使用 root 用户运行：sudo bash install.sh"
   exit 1
 fi
+
+on_error() {
+  exit_code="$?"
+  echo
+  echo "安装失败，错误位置：第 ${BASH_LINENO[0]} 行，退出码：${exit_code}"
+  echo "你可以重新执行安装命令，脚本会继续使用已安装的环境。"
+  exit "${exit_code}"
+}
+
+trap on_error ERR
 
 can_prompt() {
   [ "${INTERACTIVE}" != "0" ] && [ "${INTERACTIVE}" != "false" ] && [ -t 0 ]
@@ -547,6 +558,8 @@ print_summary() {
   echo "默认管理员密码：admin123"
   echo ""
   echo "项目信息："
+  echo "安装脚本版本：${INSTALLER_VERSION}"
+  echo "GitHub 仓库：${REPO_URL}"
   echo "项目目录：${APP_DIR}"
   echo "运行端口：${PORT}"
   echo "管理员路径：${ADMIN_PATH}"
@@ -587,13 +600,11 @@ print_summary() {
 
 main() {
   echo "==> 十夜管理系统安装向导 ${INSTALLER_VERSION}"
+  echo "==> 默认仓库：${REPO_URL}"
   if can_prompt; then
     PORT="$(ask_value '项目运行端口' "${PORT}")"
     ADMIN_PATH="$(normalize_route_path "$(ask_value '管理员入口路径' "${ADMIN_PATH}")")"
     APP_DIR="$(ask_value '安装目录' "${APP_DIR}")"
-    if [ -z "${REPO_URL}" ]; then
-      REPO_URL="$(ask_value 'GitHub 仓库地址，本地安装可留空' 'https://github.com/wstimin/3-xuiguanli-shangye.git')"
-    fi
   fi
 
   configure_database_interactive
