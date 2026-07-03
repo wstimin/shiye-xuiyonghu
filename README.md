@@ -74,6 +74,11 @@ curl -fsSL https://raw.githubusercontent.com/wstimin/3-xuiguanli-shangye/main/in
 
 1Panel、宝塔等面板部署时，可以不在面板里手动添加环境变量。上传项目并启动 Node.js 后，首次访问会进入安装向导，填写 MySQL 信息即可自动测试连接、创建数据库表并完成安装。
 
+面板部署请查看独立教程，不要和一键安装脚本混用：
+
+- [1Panel 部署教程](./1Panel部署教程.md)
+- [宝塔部署教程](./宝塔部署教程.md)
+
 需要准备的信息：
 
 ```text
@@ -246,4 +251,4 @@ SESSION_PREFIX=shiye:session:
 
 ## 详细教程
 
-查看 [部署教程.md](./部署教程.md)。
+查看 [部署教程.md](./部署教程.md)。面板部署请单独查看 [1Panel 部署教程](./1Panel部署教程.md) 或 [宝塔部署教程](./宝塔部署教程.md)。
