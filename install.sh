@@ -86,15 +86,23 @@ ask_choice() {
     printf '%s' "${default_value}"
     return
   fi
-  echo
-  echo "${prompt}"
+  echo >&2
+  echo "${prompt}" >&2
   index=1
   for option in "$@"; do
-    echo "  ${index}) ${option}"
+    echo "  ${index}) ${option}" >&2
     index=$((index + 1))
   done
   read -r -p "请选择 [${default_value}]: " value
   printf '%s' "${value:-${default_value}}"
+}
+
+normalize_route_path() {
+  value="${1:-/admin}"
+  case "${value}" in
+    /*) printf '%s' "${value%/}" ;;
+    *) printf '/%s' "${value%/}" ;;
+  esac
 }
 
 package_install() {
@@ -549,7 +557,7 @@ main() {
   echo "==> 十夜管理系统安装向导"
   if can_prompt; then
     PORT="$(ask_value '项目运行端口' "${PORT}")"
-    ADMIN_PATH="$(ask_value '管理员入口路径' "${ADMIN_PATH}")"
+    ADMIN_PATH="$(normalize_route_path "$(ask_value '管理员入口路径' "${ADMIN_PATH}")")"
     APP_DIR="$(ask_value '安装目录' "${APP_DIR}")"
     if [ -z "${REPO_URL}" ]; then
       REPO_URL="$(ask_value 'GitHub 仓库地址，本地安装可留空' 'https://github.com/wstimin/3-xuiguanli-shangye.git')"
