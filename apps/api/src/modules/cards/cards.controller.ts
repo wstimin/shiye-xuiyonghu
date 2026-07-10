@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Post, UseGuards, UsePipes } from '@nestjs/common';
-import { cardGenerateSchema, cardRedeemSchema } from '@shiye/shared';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards, UsePipes } from '@nestjs/common';
+import { cardGenerateSchema, cardRedeemSchema, cardTemplateUpsertSchema } from '@shiye/shared';
 import type { z } from 'zod';
 import { AuthGuard } from '../../shared/auth.guard.js';
 import { CurrentUser } from '../../shared/current-user.decorator.js';
@@ -17,11 +17,43 @@ export class CardsController {
   @Roles('admin')
   list() { return this.cards.list(); }
 
+  @Get('admin/card-templates')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  templates() { return this.cards.templates(); }
+
+  @Post('admin/card-templates')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  @UsePipes(new ZodValidationPipe(cardTemplateUpsertSchema))
+  createTemplate(@Body() body: z.infer<typeof cardTemplateUpsertSchema>) { return this.cards.createTemplate(body); }
+
+  @Patch('admin/card-templates/:id')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  @UsePipes(new ZodValidationPipe(cardTemplateUpsertSchema.partial()))
+  updateTemplate(@Param('id') id: string, @Body() body: Partial<z.infer<typeof cardTemplateUpsertSchema>>) { return this.cards.updateTemplate(id, body); }
+
+  @Delete('admin/card-templates/:id')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  deleteTemplate(@Param('id') id: string) { return this.cards.deleteTemplate(id); }
+
   @Post('admin/cards/generate')
   @UseGuards(AuthGuard)
   @Roles('admin')
   @UsePipes(new ZodValidationPipe(cardGenerateSchema))
   generate(@Body() body: z.infer<typeof cardGenerateSchema>) { return this.cards.generate(body); }
+
+  @Delete('admin/cards/:id')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  deleteCard(@Param('id') id: string) { return this.cards.deleteCard(id); }
+
+  @Delete('admin/card-batches/:id')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  deleteBatch(@Param('id') id: string) { return this.cards.deleteBatch(id); }
 
   @Post('user/cards/redeem')
   @UseGuards(AuthGuard)

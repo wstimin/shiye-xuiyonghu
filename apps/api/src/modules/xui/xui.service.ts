@@ -11,8 +11,10 @@ type XuiServerConfig = {
   baseUrl: string;
   basePath?: string | null;
   tokenEnc?: string | null;
+  token?: string | null;
   username?: string | null;
   passwordEnc?: string | null;
+  password?: string | null;
 };
 
 type SyncOptions = {
@@ -28,9 +30,10 @@ export class XuiService {
   async testConnection(input: z.infer<typeof xuiServerUpsertSchema>) {
     const client = await this.createAuthenticatedClient({
       baseUrl: input.baseUrl,
-      tokenEnc: input.token,
+      basePath: input.basePath,
+      token: input.token,
       username: input.username,
-      passwordEnc: input.password
+      password: input.password
     });
 
     const inbounds = await client.listInbounds();
@@ -68,8 +71,10 @@ export class XuiService {
       }
 
       const uuid = customerNode.uuid || randomUUID();
+      const subId = this.subscriptionId(uuid);
       const xuiClient = this.buildXuiClient({
         uuid,
+        subId,
         email: customerNode.xuiEmail,
         enabled: (options.status || customerNode.status) === 'active',
         expireAt: options.expireAt === undefined ? customerNode.expireAt : options.expireAt,
@@ -82,10 +87,11 @@ export class XuiService {
         ? await client.updateClient(customerNode.xuiEmail, { ...xuiClient, inboundIds: [inboundId] })
         : await client.addClient({ client: xuiClient, inboundIds: [inboundId] });
       this.assertXuiSuccess(payload);
+      const links = await this.linksForClient(client, customerNode.xuiEmail).catch(() => [] as string[]);
       const syncedAt = new Date();
       const updatedNode = await this.prisma.customerNode.update({
         where: { id: customerNode.id },
-        data: { uuid, lastSyncedAt: syncedAt },
+        data: { uuid, lastSyncedAt: syncedAt, config: this.toJsonValue({ ...(this.xuiObject(customerNode.config)), subId, links }) },
         include: { serviceNode: { include: { server: true } }, customer: { select: { id: true, name: true, loginUsername: true } } }
       });
 
@@ -96,6 +102,8 @@ export class XuiService {
         xuiEmail: customerNode.xuiEmail,
         route,
         action: existing.exists ? 'update' : 'add',
+        subId,
+        links,
         response: this.toJsonValue(payload)
       };
       await this.writeSyncLog(serverId, 'customer-node-sync', 'success', `Synced ${customerNode.xuiEmail}`, detail);
@@ -111,21 +119,34 @@ export class XuiService {
     }
   }
 
+  async customerNodeLinks(customerId: string, customerNodeId: string) {
+    const customerNode = await this.prisma.customerNode.findFirst({
+      where: { id: customerNodeId, customerId },
+      include: { serviceNode: { include: { server: true } } }
+    });
+    if (!customerNode) throw new NotFoundException('Customer node not found');
+    const config = this.xuiObject(customerNode.config);
+    const savedLinks = Array.isArray(config.links) ? config.links.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
+    if (savedLinks.length) return savedLinks;
+    const client = await this.createAuthenticatedClient(customerNode.serviceNode.server);
+    return this.linksForClient(client, customerNode.xuiEmail);
+  }
+
   private async createAuthenticatedClient(config: XuiServerConfig) {
     const client = new XuiClient({
       baseUrl: config.baseUrl,
       basePath: config.basePath || undefined,
-      auth: config.tokenEnc ? { kind: 'token', token: this.encryption.decrypt(config.tokenEnc) } : undefined
+      auth: config.token || config.tokenEnc ? { kind: 'token', token: config.token || this.encryption.decrypt(config.tokenEnc || '') } : undefined
     });
 
-    if (!config.tokenEnc && config.username && config.passwordEnc) {
-      await client.login({ username: config.username, password: this.encryption.decrypt(config.passwordEnc) });
+    if (!config.token && !config.tokenEnc && config.username && (config.password || config.passwordEnc)) {
+      await client.login({ username: config.username, password: config.password || this.encryption.decrypt(config.passwordEnc || '') });
     }
 
     return client;
   }
 
-  private buildXuiClient(input: { uuid: string; email: string; enabled: boolean; expireAt?: Date | null; trafficLimitGb: Prisma.Decimal | number | string | null }) {
+  private buildXuiClient(input: { uuid: string; subId: string; email: string; enabled: boolean; expireAt?: Date | null; trafficLimitGb: Prisma.Decimal | number | string | null }) {
     return {
       id: input.uuid,
       uuid: input.uuid,
@@ -136,9 +157,22 @@ export class XuiService {
       limitIp: 0,
       flow: '',
       tgId: 0,
-      subId: input.email,
+      subId: input.subId,
       reset: 0
     };
+  }
+
+  private async linksForClient(client: XuiClient, email: string) {
+    const payload = await client.clientLinks(email);
+    this.assertXuiSuccess(payload);
+    const links = this.xuiArray(payload).filter((item): item is string => typeof item === 'string' && item.length > 0);
+    if (links.length) return links;
+    const object = this.xuiObject(payload);
+    for (const key of ['links', 'urls', 'obj', 'data']) {
+      const value = this.parseMaybeJson(object[key]);
+      if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+    }
+    return [];
   }
 
   private async findClient(client: XuiClient, email: string, inbounds: unknown[]) {
@@ -214,6 +248,10 @@ export class XuiService {
     const gb = Number(value);
     if (!Number.isFinite(gb) || gb <= 0) return 0;
     return Math.round(gb * 1024 * 1024 * 1024);
+  }
+
+  private subscriptionId(uuid: string) {
+    return uuid.replace(/-/g, '').slice(0, 16);
   }
 
   private async writeSyncLog(serverId: string | null, action: string, status: string, message: string, detail: unknown) {

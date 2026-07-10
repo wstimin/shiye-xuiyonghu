@@ -44,5 +44,15 @@ export const cardGenerateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   amount: moneySchema,
   quantity: z.coerce.number().int().min(1).max(500),
-  prefix: z.string().trim().max(16).optional()
+  prefix: z.string().trim().max(16).optional(),
+  templateId: z.string().trim().min(1).optional()
+});
+
+export const cardTemplateUpsertSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  amount: moneySchema,
+  quantity: z.coerce.number().int().min(1).max(500).default(10),
+  prefix: z.string().trim().max(16).optional().or(z.literal('')),
+  enabled: z.boolean().default(true),
+  remark: z.string().trim().max(500).optional().or(z.literal(''))
 });

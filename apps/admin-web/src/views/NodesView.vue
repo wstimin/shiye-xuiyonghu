@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { api } from '../api';
 
-type XuiServer = { id: string; name: string; baseUrl: string; username?: string | null; enabled: boolean; remark?: string | null; hasPassword?: boolean; hasToken?: boolean };
+type XuiServer = { id: string; name: string; baseUrl: string; basePath?: string | null; username?: string | null; enabled: boolean; remark?: string | null; hasPassword?: boolean; hasToken?: boolean };
 type ServiceNode = { id: string; serverId: string; name: string; protocol: string; priceMonthly: string; trafficLimitGb: string; enabled: boolean; inboundId?: number | null; remark?: string | null; server?: XuiServer };
 
 const servers = ref<XuiServer[]>([]);
@@ -15,7 +15,7 @@ const testingServer = ref(false);
 const error = ref('');
 const editingServerId = ref('');
 const editingNodeId = ref('');
-const serverForm = reactive({ name: '', baseUrl: '', username: '', password: '', token: '', enabled: true, remark: '' });
+const serverForm = reactive({ name: '', baseUrl: '', basePath: '', username: '', password: '', token: '', enabled: true, remark: '' });
 const nodeForm = reactive({ name: '', serverId: '', inboundId: undefined as number | undefined, protocol: 'vless', priceMonthly: 0, trafficLimitGb: 0, enabled: true, remark: '' });
 const serverOptions = computed(() => servers.value.map((server) => ({ label: server.name, value: server.id })));
 
@@ -88,6 +88,7 @@ function editServer(server: XuiServer) {
   Object.assign(serverForm, {
     name: server.name,
     baseUrl: server.baseUrl,
+    basePath: server.basePath || '',
     username: server.username || '',
     password: '',
     token: '',
@@ -128,7 +129,7 @@ async function removeServiceNode(node: ServiceNode) {
 
 function resetServerForm() {
   editingServerId.value = '';
-  Object.assign(serverForm, { name: '', baseUrl: '', username: '', password: '', token: '', enabled: true, remark: '' });
+  Object.assign(serverForm, { name: '', baseUrl: '', basePath: '', username: '', password: '', token: '', enabled: true, remark: '' });
 }
 
 function resetNodeForm() {
@@ -152,6 +153,7 @@ onMounted(loadNodes);
       <el-form :model="serverForm" label-width="82px">
         <el-form-item label="名称"><el-input v-model="serverForm.name" /></el-form-item>
         <el-form-item label="地址"><el-input v-model="serverForm.baseUrl" placeholder="https://xui.example.com" /></el-form-item>
+        <el-form-item label="路径"><el-input v-model="serverForm.basePath" placeholder="例如 /panel，根路径可留空" /></el-form-item>
         <el-form-item label="账号"><el-input v-model="serverForm.username" /></el-form-item>
         <el-form-item label="密码"><el-input v-model="serverForm.password" type="password" show-password placeholder="编辑时留空表示不修改" /></el-form-item>
         <el-form-item label="API Token"><el-input v-model="serverForm.token" type="password" show-password placeholder="编辑时留空表示不修改" /></el-form-item>

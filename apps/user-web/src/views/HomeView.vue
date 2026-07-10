@@ -37,7 +37,7 @@ onMounted(loadDashboard);
 
 <template>
   <h1 class="page-title">首页</h1>
-  <div v-if="error" class="panel">{{ error }}</div>
+  <div v-if="error" class="panel error-text">{{ error }}</div>
   <div v-else class="metric-grid" :class="{ loading }">
     <div class="metric"><span>账户余额</span><strong>{{ dashboard?.customer.balance ?? '--' }}</strong></div>
     <div class="metric"><span>可用节点</span><strong>{{ dashboard?.nodes.length ?? '--' }}</strong></div>

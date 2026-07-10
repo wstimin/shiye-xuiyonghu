@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { Upload, X } from 'lucide-vue-next';
 import { api } from '../api';
 
-type AdminSettings = { brand: { brandName: string; logoDataUrl: string }; payments: unknown[] };
+type AdminSettings = { brand: { brandName: string; logoDataUrl: string } };
 type PaymentProvider = 'alipay' | 'wechat' | 'epay' | 'bepusdt';
 type PaymentChannel = {
   id: string;
@@ -21,7 +22,7 @@ type PaymentChannel = {
 };
 
 const providerOptions = [
-  { label: '支付宝当面付', value: 'alipay' },
+  { label: '支付宝官方', value: 'alipay' },
   { label: '微信支付 Native', value: 'wechat' },
   { label: '易支付', value: 'epay' },
   { label: 'BEpusdt', value: 'bepusdt' }
@@ -63,8 +64,7 @@ const channelForm = reactive({
 });
 
 const callbackOrigin = computed(() => window.location.origin.replace(/\/+$/, ''));
-const callbackPath = computed(() => `/api/payments/${channelForm.provider}/notify`);
-const callbackUrl = computed(() => `${callbackOrigin.value}${callbackPath.value}`);
+const callbackUrl = computed(() => `${callbackOrigin.value}/api/payments/${channelForm.provider}/notify`);
 const secretLabel = computed(() => {
   if (channelForm.provider === 'bepusdt') return 'Token';
   if (channelForm.provider === 'wechat') return 'V2 API 密钥';
@@ -101,6 +101,26 @@ async function saveBrand() {
   }
 }
 
+async function onLogoSelected(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    ElMessage.error('请选择图片文件');
+    return;
+  }
+  if (file.size > 3 * 1024 * 1024) {
+    ElMessage.error('Logo 图片不能超过 3MB');
+    return;
+  }
+  try {
+    brandForm.logoDataUrl = await imageToDataUrl(file, 256);
+  } catch (err) {
+    ElMessage.error(err instanceof Error ? err.message : 'Logo 图片读取失败');
+  }
+}
+
 async function changePassword() {
   changingPassword.value = true;
   error.value = '';
@@ -119,6 +139,7 @@ async function saveChannel() {
   savingChannel.value = true;
   error.value = '';
   try {
+    const resolvedNotifyUrl = channelForm.notifyUrl || callbackUrl.value;
     const body = {
       provider: channelForm.provider,
       name: channelForm.name,
@@ -136,7 +157,7 @@ async function saveChannel() {
         mchId: channelForm.provider === 'wechat' ? channelForm.mchId : '',
         apiKey: channelForm.provider === 'wechat' ? channelForm.apiKey : '',
         type: channelForm.type,
-        notifyUrl: channelForm.notifyUrl,
+        notifyUrl: resolvedNotifyUrl,
         returnUrl: channelForm.returnUrl
       }
     };
@@ -176,7 +197,7 @@ function editChannel(channel: PaymentChannel) {
 }
 
 async function removeChannel(channel: PaymentChannel) {
-  await ElMessageBox.confirm(`确认删除支付方式「${channel.name}」？`, '删除确认', { type: 'warning' });
+  await ElMessageBox.confirm(`确认删除支付方式“${channel.name}”？`, '删除确认', { type: 'warning' });
   await api(`/api/admin/payment-channels/${channel.id}`, { method: 'DELETE' });
   ElMessage.success('支付方式已删除');
   if (editingChannelId.value === channel.id) resetChannelForm();
@@ -209,7 +230,11 @@ function resetChannelForm() {
 function onProviderChange(provider: PaymentProvider) {
   channelForm.name = providerName(provider);
   channelForm.type = defaultType(provider);
-  channelForm.url = provider === 'alipay' ? 'https://openapi.alipay.com/gateway.do' : provider === 'wechat' ? 'https://api.mch.weixin.qq.com/pay/unifiedorder' : '';
+  channelForm.url = provider === 'alipay'
+    ? 'https://openapi.alipay.com/gateway.do'
+    : provider === 'wechat'
+      ? 'https://api.mch.weixin.qq.com/pay/unifiedorder'
+      : '';
 }
 
 function defaultType(provider: PaymentProvider) {
@@ -224,7 +249,7 @@ function providerName(provider: PaymentProvider) {
 }
 
 function paymentTypeLabel(provider: PaymentProvider) {
-  return provider === 'alipay' ? '支付宝接口' : '支付类型值';
+  return provider === 'alipay' ? '支付宝接口' : '支付类型';
 }
 
 function secretState(channel: PaymentChannel) {
@@ -232,6 +257,29 @@ function secretState(channel: PaymentChannel) {
   if (channel.provider === 'bepusdt') return channel.hasToken ? '已配置' : '未配置';
   if (channel.provider === 'alipay') return channel.hasPrivateKey && channel.hasPublicKey ? '已配置' : '未配置';
   return channel.hasApiKey ? '已配置' : '未配置';
+}
+
+function imageToDataUrl(file: File, maxSize: number) {
+  return new Promise<string>((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return reject(new Error('浏览器不支持图片处理'));
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Logo 图片读取失败'));
+    };
+    image.src = url;
+  });
 }
 
 onMounted(loadSettings);
@@ -246,8 +294,21 @@ onMounted(loadSettings);
       <div class="panel-toolbar"><strong>品牌设置</strong></div>
       <el-form :model="brandForm" label-width="88px" v-loading="loading">
         <el-form-item label="系统名称"><el-input v-model="brandForm.brandName" maxlength="80" /></el-form-item>
-        <el-form-item label="Logo Data"><el-input v-model="brandForm.logoDataUrl" type="textarea" :rows="3" placeholder="可留空" /></el-form-item>
-        <el-form-item><el-button type="primary" :loading="savingBrand" @click="saveBrand">保存</el-button></el-form-item>
+        <el-form-item label="Logo">
+          <div class="logo-uploader">
+            <div class="logo-preview">
+              <img v-if="brandForm.logoDataUrl" :src="brandForm.logoDataUrl" alt="Logo" />
+              <span v-else>{{ brandForm.brandName.slice(0, 1) }}</span>
+            </div>
+            <label class="file-button">
+              <Upload :size="16" />
+              <span>上传图片</span>
+              <input type="file" accept="image/*" @change="onLogoSelected" />
+            </label>
+            <el-button v-if="brandForm.logoDataUrl" plain @click="brandForm.logoDataUrl = ''"><X :size="15" />清除</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item><el-button type="primary" :loading="savingBrand" @click="saveBrand">保存品牌</el-button></el-form-item>
       </el-form>
     </div>
 
@@ -277,36 +338,31 @@ onMounted(loadSettings);
         <el-form-item v-if="channelForm.provider === 'alipay' || channelForm.provider === 'wechat'" label="AppID"><el-input v-model="channelForm.appId" /></el-form-item>
         <el-form-item v-if="channelForm.provider === 'wechat'" label="商户号"><el-input v-model="channelForm.mchId" /></el-form-item>
         <el-form-item v-if="channelForm.provider === 'alipay' || channelForm.provider === 'wechat'" label="商品名称"><el-input v-model="channelForm.productName" /></el-form-item>
-        <el-form-item v-if="channelForm.provider === 'alipay'" label="应用私钥">
-          <el-input v-model="channelForm.privateKey" type="textarea" :rows="4" placeholder="留空表示不修改已保存私钥" />
-        </el-form-item>
-        <el-form-item v-if="channelForm.provider === 'alipay'" label="支付宝公钥">
-          <el-input v-model="channelForm.publicKey" type="textarea" :rows="4" placeholder="留空表示不修改已保存公钥" />
-        </el-form-item>
+        <el-form-item v-if="channelForm.provider === 'alipay'" label="应用私钥"><el-input v-model="channelForm.privateKey" type="textarea" :rows="4" placeholder="编辑时留空表示不修改已保存私钥" /></el-form-item>
+        <el-form-item v-if="channelForm.provider === 'alipay'" label="支付宝公钥"><el-input v-model="channelForm.publicKey" type="textarea" :rows="4" placeholder="编辑时留空表示不修改已保存公钥" /></el-form-item>
         <el-form-item v-if="channelForm.provider === 'epay' || channelForm.provider === 'bepusdt' || channelForm.provider === 'wechat'" :label="secretLabel">
-          <el-input v-if="channelForm.provider === 'epay'" v-model="channelForm.key" type="password" show-password placeholder="留空表示不修改已保存密钥" />
-          <el-input v-else-if="channelForm.provider === 'bepusdt'" v-model="channelForm.token" type="password" show-password placeholder="留空表示不修改已保存 Token" />
-          <el-input v-else v-model="channelForm.apiKey" type="password" show-password placeholder="留空表示不修改已保存 V2 API 密钥" />
+          <el-input v-if="channelForm.provider === 'epay'" v-model="channelForm.key" type="password" show-password placeholder="编辑时留空表示不修改已保存密钥" />
+          <el-input v-else-if="channelForm.provider === 'bepusdt'" v-model="channelForm.token" type="password" show-password placeholder="编辑时留空表示不修改已保存 Token" />
+          <el-input v-else v-model="channelForm.apiKey" type="password" show-password placeholder="编辑时留空表示不修改已保存 V2 API 密钥" />
         </el-form-item>
         <el-form-item v-if="channelForm.provider === 'alipay'" :label="paymentTypeLabel(channelForm.provider)">
-          <el-select v-model="channelForm.type" style="width: 100%">
-            <el-option v-for="item in alipayModeOptions" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
+          <el-select v-model="channelForm.type" style="width: 100%"><el-option v-for="item in alipayModeOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select>
         </el-form-item>
         <el-form-item v-if="channelForm.provider === 'epay' || channelForm.provider === 'bepusdt'" :label="paymentTypeLabel(channelForm.provider)"><el-input v-model="channelForm.type" /></el-form-item>
         <el-form-item label="回调地址"><el-input :model-value="callbackUrl" readonly /></el-form-item>
-        <el-form-item label="自定义回调"><el-input v-model="channelForm.notifyUrl" placeholder="通常留空，系统自动使用上方地址" /></el-form-item>
+        <el-form-item label="自定义回调"><el-input v-model="channelForm.notifyUrl" placeholder="通常留空，系统使用当前域名生成" /></el-form-item>
+        <el-form-item label="返回地址"><el-input v-model="channelForm.returnUrl" placeholder="通常留空，系统使用用户支付结果页" /></el-form-item>
         <el-form-item label="排序"><el-input-number v-model="channelForm.sortOrder" :min="0" :max="9999" style="width: 100%" /></el-form-item>
         <el-form-item label="启用"><el-switch v-model="channelForm.enabled" /></el-form-item>
         <el-form-item>
-          <el-button type="primary" :loading="savingChannel" :disabled="!channelForm.name || !channelForm.url" @click="saveChannel">{{ editingChannelId ? '保存修改' : '新增支付方式' }}</el-button>
+          <el-button type="primary" :loading="savingChannel" :disabled="!channelForm.name" @click="saveChannel">{{ editingChannelId ? '保存修改' : '新增支付方式' }}</el-button>
           <el-button v-if="editingChannelId" @click="resetChannelForm">取消编辑</el-button>
         </el-form-item>
       </el-form>
 
       <el-table :data="channels" v-loading="loading" style="width: 100%">
         <el-table-column label="名称" min-width="140"><template #default="{ row }: { row: PaymentChannel }">{{ row.name }}</template></el-table-column>
-        <el-table-column label="类型" width="110"><template #default="{ row }: { row: PaymentChannel }">{{ providerName(row.provider) }}</template></el-table-column>
+        <el-table-column label="类型" width="130"><template #default="{ row }: { row: PaymentChannel }">{{ providerName(row.provider) }}</template></el-table-column>
         <el-table-column label="密钥" width="100"><template #default="{ row }: { row: PaymentChannel }">{{ secretState(row) }}</template></el-table-column>
         <el-table-column label="状态" width="90"><template #default="{ row }: { row: PaymentChannel }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
         <el-table-column label="回调地址" min-width="260"><template #default="{ row }: { row: PaymentChannel }">{{ row.notifyUrl }}</template></el-table-column>

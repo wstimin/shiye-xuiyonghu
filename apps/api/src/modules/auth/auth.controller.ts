@@ -16,13 +16,13 @@ export class AuthController {
   @UsePipes(new ZodValidationPipe(loginSchema))
   async login(@Body() body: z.infer<typeof loginSchema>, @Res({ passthrough: true }) response: Response) {
     const user = await this.auth.login(body);
-    response.setHeader('Set-Cookie', sessionCookie(signSession(user)));
+    response.setHeader('Set-Cookie', sessionCookie(signSession(user), user.role));
     return user;
   }
 
   @Post('logout')
-  logout(@Res({ passthrough: true }) response: Response) {
-    response.setHeader('Set-Cookie', clearSessionCookie());
+  logout(@Body() body: { entry?: 'admin' | 'user' } | undefined, @Res({ passthrough: true }) response: Response) {
+    response.setHeader('Set-Cookie', clearSessionCookie(body?.entry));
     return this.auth.logout();
   }
 
@@ -37,7 +37,7 @@ export class AuthController {
   @UsePipes(new ZodValidationPipe(changePasswordSchema))
   async changePassword(@Body() body: z.infer<typeof changePasswordSchema>, @CurrentUser() user: SessionUser, @Res({ passthrough: true }) response: Response) {
     const result = await this.auth.changePassword(user, body);
-    response.setHeader('Set-Cookie', clearSessionCookie());
+    response.setHeader('Set-Cookie', clearSessionCookie(user.role));
     return result;
   }
 }

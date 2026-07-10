@@ -5,17 +5,26 @@ body { margin: 0; font-family: Inter, "Microsoft YaHei", Arial, sans-serif; back
 .login-panel { width: min(380px, 100%); display: grid; gap: 14px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 28px; box-shadow: 0 16px 40px rgb(15 23 42 / 8%); }
 .login-panel h1 { margin: 0; font-size: 24px; }
 .login-panel p { margin: 0 0 4px; color: #64748b; }
+.login-brand { width: 60px; height: 60px; display: grid; place-items: center; border: 1px solid #d7dde8; border-radius: 8px; background: #f8fafc; color: #0f766e; font-size: 24px; font-weight: 700; overflow: hidden; }
+.login-brand img { width: 100%; height: 100%; object-fit: contain; }
 .login-panel input { min-width: 0; height: 40px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 0 12px; }
 .login-panel button { height: 40px; border: 0; border-radius: 6px; background: #0f766e; color: #fff; cursor: pointer; }
 .login-panel button:disabled { opacity: 0.55; cursor: not-allowed; }
 .app-shell { min-height: 100vh; }
 .header { height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; background: #fff; border-bottom: 1px solid #e5e7eb; position: sticky; top: 0; z-index: 10; }
+.header-brand { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.header-brand img, .brand-mark { width: 32px; height: 32px; flex: 0 0 32px; display: grid; place-items: center; border-radius: 6px; background: #ecfdf5; color: #0f766e; object-fit: contain; overflow: hidden; }
+.header-brand strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .header nav { display: flex; align-items: center; gap: 8px; }
 .nav-link { height: 38px; display: inline-flex; align-items: center; gap: 8px; color: #475569; text-decoration: none; border-radius: 6px; padding: 0 12px; }
 .nav-link.router-link-active { background: #0f766e; color: #fff; }
 .logout-button { height: 38px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 6px; background: transparent; color: #475569; padding: 0 10px; cursor: pointer; }
 .main { width: min(1120px, calc(100% - 32px)); margin: 24px auto; }
 .page-title { margin: 0 0 16px; font-size: 24px; }
+.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.page-heading .page-title { margin: 0; }
+.icon-action { height: 36px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #334155; padding: 0 12px; cursor: pointer; }
+.icon-action:disabled { opacity: 0.55; cursor: not-allowed; }
 .panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 18px; }
 .metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .metric { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; }
@@ -45,9 +54,17 @@ body { margin: 0; font-family: Inter, "Microsoft YaHei", Arial, sans-serif; back
 .password-form button { height: 40px; border: 0; border-radius: 6px; background: #0f766e; color: #fff; cursor: pointer; }
 .password-form button:disabled { opacity: 0.55; cursor: not-allowed; }
 .node-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.node-card { min-width: 0; }
+.node-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .node-card h2 { margin: 0 0 8px; font-size: 18px; }
 .node-card p { margin: 0 0 12px; color: #64748b; }
 .node-meta { display: grid; gap: 6px; color: #334155; font-size: 14px; }
+.status-pill { flex: 0 0 auto; display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 999px; background: #fee2e2; color: #991b1b; font-size: 12px; }
+.status-pill.active { background: #dcfce7; color: #166534; }
+.link-list { display: grid; gap: 8px; margin-top: 12px; }
+.link-row { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; gap: 8px; }
+.link-row code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid #dbe3ef; border-radius: 6px; background: #f8fafc; padding: 8px; font-size: 12px; }
+.copy-button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #334155; cursor: pointer; }
 .renew-form { display: flex; gap: 8px; margin-top: 14px; }
 .renew-form select { flex: 1; height: 38px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 0 10px; background: #fff; }
 .renew-form button { width: 82px; height: 38px; border: 0; border-radius: 6px; background: #0f766e; color: #fff; }

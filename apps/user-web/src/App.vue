@@ -4,6 +4,7 @@ import { CircleUserRound, Home, LogOut, Network, ReceiptText } from 'lucide-vue-
 import { api } from './api';
 
 type SessionUser = { role: string; username: string };
+type Branding = { brandName: string; logoDataUrl: string };
 
 const nav = [
   { to: '/', label: '首页', icon: Home },
@@ -16,12 +17,24 @@ const checking = ref(true);
 const loggingIn = ref(false);
 const loginError = ref('');
 const user = ref<SessionUser | null>(null);
+const branding = reactive<Branding>({ brandName: '十夜用户中心', logoDataUrl: '' });
 const loginForm = reactive({ username: '', password: '' });
+
+async function loadBranding() {
+  try {
+    const payload = await api<{ settings: Branding }>('/api/public/branding');
+    branding.brandName = payload.settings.brandName || '十夜用户中心';
+    branding.logoDataUrl = payload.settings.logoDataUrl || '';
+  } catch {
+    branding.brandName = '十夜用户中心';
+    branding.logoDataUrl = '';
+  }
+}
 
 async function loadMe() {
   checking.value = true;
   try {
-    const session = await api<SessionUser>('/api/auth/me');
+    const session = await api<SessionUser>('/api/auth/me?entry=user');
     user.value = session.role === 'user' ? session : null;
   } catch {
     user.value = null;
@@ -36,7 +49,7 @@ async function login() {
   try {
     const session = await api<SessionUser>('/api/login', { method: 'POST', body: { ...loginForm, entry: 'user' } });
     if (session.role !== 'user') {
-      await api('/api/logout', { method: 'POST' }).catch(() => undefined);
+      await api('/api/logout', { method: 'POST', body: { entry: 'user' } }).catch(() => undefined);
       throw new Error('当前账号不是用户账号');
     }
     user.value = session;
@@ -49,11 +62,14 @@ async function login() {
 }
 
 async function logout() {
-  await api('/api/logout', { method: 'POST' }).catch(() => undefined);
+  await api('/api/logout', { method: 'POST', body: { entry: 'user' } }).catch(() => undefined);
   user.value = null;
 }
 
-onMounted(loadMe);
+onMounted(async () => {
+  await loadBranding();
+  await loadMe();
+});
 </script>
 
 <template>
@@ -61,7 +77,11 @@ onMounted(loadMe);
 
   <div v-else-if="!user" class="login-screen">
     <form class="login-panel" @submit.prevent="login">
-      <h1>十夜用户中心</h1>
+      <div class="login-brand">
+        <img v-if="branding.logoDataUrl" :src="branding.logoDataUrl" alt="Logo" />
+        <span v-else>{{ branding.brandName.slice(0, 1) }}</span>
+      </div>
+      <h1>{{ branding.brandName }}</h1>
       <p>用户登录</p>
       <div v-if="loginError" class="error-text">{{ loginError }}</div>
       <input v-model="loginForm.username" placeholder="账号" autocomplete="username" />
@@ -72,7 +92,11 @@ onMounted(loadMe);
 
   <div v-else class="app-shell">
     <header class="header">
-      <strong>十夜用户中心</strong>
+      <div class="header-brand">
+        <img v-if="branding.logoDataUrl" :src="branding.logoDataUrl" alt="Logo" />
+        <span v-else class="brand-mark">{{ branding.brandName.slice(0, 1) }}</span>
+        <strong>{{ branding.brandName }}</strong>
+      </div>
       <nav>
         <router-link v-for="item in nav" :key="item.to" :to="item.to" class="nav-link">
           <component :is="item.icon" :size="18" />

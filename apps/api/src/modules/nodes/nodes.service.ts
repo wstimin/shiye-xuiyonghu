@@ -4,10 +4,11 @@ import type { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { EncryptionService } from '../security/encryption.service.js';
+import { XuiService } from '../xui/xui.service.js';
 
 @Injectable()
 export class NodesService {
-  constructor(private readonly prisma: PrismaService, private readonly encryption: EncryptionService) {}
+  constructor(private readonly prisma: PrismaService, private readonly encryption: EncryptionService, private readonly xui: XuiService) {}
 
   async listServers() {
     const servers = await this.prisma.xuiServer.findMany({ orderBy: { createdAt: 'desc' } });
@@ -19,6 +20,7 @@ export class NodesService {
       data: {
         name: input.name,
         baseUrl: input.baseUrl,
+        basePath: input.basePath || null,
         username: input.username || null,
         passwordEnc: this.encryption.encryptNullable(input.password),
         tokenEnc: this.encryption.encryptNullable(input.token),
@@ -36,6 +38,7 @@ export class NodesService {
       data: {
         name: input.name,
         baseUrl: input.baseUrl,
+        basePath: input.basePath === undefined ? undefined : input.basePath || null,
         username: input.username === undefined ? undefined : input.username || null,
         passwordEnc: input.password === undefined ? undefined : this.encryption.encryptNullable(input.password),
         tokenEnc: input.token === undefined ? undefined : this.encryption.encryptNullable(input.token),
@@ -101,8 +104,8 @@ export class NodesService {
     return { deleted: true, id };
   }
 
-  listUserNodes(customerId: string) {
-    return this.prisma.customerNode.findMany({
+  async listUserNodes(customerId: string) {
+    const nodes = await this.prisma.customerNode.findMany({
       where: { customerId },
       orderBy: { createdAt: 'desc' },
       include: {
@@ -111,6 +114,10 @@ export class NodesService {
         }
       }
     });
+    return Promise.all(nodes.map(async (node) => {
+      const links = await this.xui.customerNodeLinks(customerId, node.id).catch(() => [] as string[]);
+      return { ...node, links, subId: node.config && typeof node.config === 'object' && !Array.isArray(node.config) ? (node.config as Record<string, unknown>).subId : node.xuiEmail };
+    }));
   }
 
   async bindCustomerNode(customerId: string, input: z.infer<typeof customerNodeCreateSchema>) {
@@ -122,7 +129,7 @@ export class NodesService {
     if (!serviceNode) throw new NotFoundException('服务节点不存在');
 
     const xuiEmail = input.xuiEmail || `${customer.loginUsername}-${serviceNode.id.slice(0, 6)}@shiye.local`;
-    return this.prisma.customerNode.create({
+    const node = await this.prisma.customerNode.create({
       data: {
         customerId,
         serviceNodeId: input.serviceNodeId,
@@ -132,6 +139,11 @@ export class NodesService {
         trafficLimitGb: new Prisma.Decimal(input.trafficLimitGb ?? serviceNode.trafficLimitGb),
         status: 'active'
       },
+      include: { serviceNode: { include: { server: true } }, customer: { select: { id: true, name: true, loginUsername: true } } }
+    });
+    await this.xui.syncCustomerNode(customerId, node.id).catch(() => undefined);
+    return this.prisma.customerNode.findUnique({
+      where: { id: node.id },
       include: { serviceNode: { include: { server: true } }, customer: { select: { id: true, name: true, loginUsername: true } } }
     });
   }

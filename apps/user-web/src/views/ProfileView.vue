@@ -15,7 +15,7 @@ async function loadProfile() {
   loading.value = true;
   error.value = '';
   try {
-    user.value = await api<SessionUser>('/api/auth/me');
+    user.value = await api<SessionUser>('/api/auth/me?entry=user');
   } catch (err) {
     error.value = err instanceof Error ? err.message : '加载失败';
   } finally {

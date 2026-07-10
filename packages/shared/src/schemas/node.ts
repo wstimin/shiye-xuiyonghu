@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const xuiServerUpsertSchema = z.object({
   name: z.string().trim().min(1).max(100),
   baseUrl: z.string().url(),
+  basePath: z.string().trim().max(120).optional(),
   username: z.string().trim().min(1).max(100).optional(),
   password: z.string().max(256).optional(),
   token: z.string().max(2048).optional(),

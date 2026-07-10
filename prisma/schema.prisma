@@ -168,15 +168,36 @@ model SocksNode {
 
 model CardBatch {
   id        String   @id @default(cuid())
+  templateId String?
   name      String   @db.VarChar(120)
   amount    Decimal  @db.Decimal(12, 2)
   quantity  Int
+  prefix    String?  @db.VarChar(32)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  template  CardTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   cards     Card[]
 
+  @@index([templateId])
   @@map("card_batches")
+}
+
+model CardTemplate {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(120)
+  amount    Decimal  @db.Decimal(12, 2)
+  quantity  Int      @default(10)
+  prefix    String?  @db.VarChar(32)
+  enabled   Boolean  @default(true)
+  remark    String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  batches   CardBatch[]
+
+  @@index([enabled])
+  @@map("card_templates")
 }
 
 model Card {

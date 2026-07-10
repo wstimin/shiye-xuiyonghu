@@ -11,12 +11,13 @@ import { HttpExceptionFilter } from './shared/http-exception.filter.js';
 import { ResponseInterceptor } from './shared/response.interceptor.js';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { cors: true });
+  const app = await NestFactory.create(AppModule, { cors: true, bodyParser: false });
 
   app.setGlobalPrefix('api');
   app.use(cookieParser());
-  app.use(express.text({ type: ['text/xml', 'application/xml', '*/xml'] }));
-  app.use(express.urlencoded({ extended: false }));
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.text({ type: ['text/xml', 'application/xml', '*/xml'], limit: '1mb' }));
+  app.use(express.urlencoded({ extended: false, limit: '1mb' }));
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new ResponseInterceptor());

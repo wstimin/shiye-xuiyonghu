@@ -7,7 +7,10 @@ import type { Role } from '@shiye/shared';
 import { ROLES_KEY } from './roles.decorator.js';
 import type { SessionUser } from './auth.types.js';
 
-const COOKIE_NAME = 'shiye_session';
+const COOKIE_NAMES: Record<Role, string> = {
+  admin: 'shiye_admin_session',
+  user: 'shiye_user_session'
+};
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -15,18 +18,35 @@ export class AuthGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
-    const token = request.cookies?.[COOKIE_NAME] || bearerToken(request.headers.authorization);
-    if (!token) throw new UnauthorizedException('请先登录');
+    const roles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [context.getHandler(), context.getClass()]);
+    const expectedRole = this.expectedRole(request, roles);
+    const token = this.sessionToken(request, expectedRole) || bearerToken(request.headers.authorization);
+    if (!token) throw new UnauthorizedException('Please login first');
 
     try {
       const payload = jwt.verify(token, sessionSecret()) as SessionUser;
       request.user = payload;
-      const roles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [context.getHandler(), context.getClass()]);
-      if (roles?.length && !roles.includes(payload.role)) throw new UnauthorizedException('没有访问权限');
+      if (roles?.length && !roles.includes(payload.role)) throw new UnauthorizedException('Permission denied');
       return true;
     } catch {
-      throw new UnauthorizedException('登录已失效，请重新登录');
+      throw new UnauthorizedException('Session expired, please login again');
     }
+  }
+
+  private sessionToken(request: Request, role?: Role) {
+    if (role) return request.cookies?.[COOKIE_NAMES[role]] || '';
+    return request.cookies?.[COOKIE_NAMES.admin] || request.cookies?.[COOKIE_NAMES.user] || request.cookies?.shiye_session || '';
+  }
+
+  private expectedRole(request: Request, roles?: Role[]) {
+    if (roles?.length === 1) return roles[0];
+    const body = request.body as { entry?: unknown } | undefined;
+    const entry = String(request.query.entry || body?.entry || '').trim();
+    if (entry === 'admin' || entry === 'user') return entry;
+    const path = request.path || request.originalUrl || '';
+    if (path.startsWith('/admin/')) return 'admin';
+    if (path.startsWith('/user/')) return 'user';
+    return undefined;
   }
 }
 
@@ -34,12 +54,13 @@ export function signSession(user: SessionUser) {
   return jwt.sign(user, sessionSecret(), { expiresIn: sessionTtl() });
 }
 
-export function sessionCookie(token: string, maxAgeSeconds = 7 * 24 * 60 * 60) {
-  return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secureCookieFlag()}`;
+export function sessionCookie(token: string, role: Role, maxAgeSeconds = 7 * 24 * 60 * 60) {
+  return `${COOKIE_NAMES[role]}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secureCookieFlag()}`;
 }
 
-export function clearSessionCookie() {
-  return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookieFlag()}`;
+export function clearSessionCookie(role?: Role) {
+  const names = role ? [COOKIE_NAMES[role]] : [...Object.values(COOKIE_NAMES), 'shiye_session'];
+  return names.map((name) => `${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookieFlag()}`);
 }
 
 function secureCookieFlag() {

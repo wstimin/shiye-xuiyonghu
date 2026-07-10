@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { cardGenerateSchema, cardRedeemSchema } from '@shiye/shared';
+import { cardGenerateSchema, cardRedeemSchema, cardTemplateUpsertSchema } from '@shiye/shared';
 import type { z } from 'zod';
 import crypto from 'node:crypto';
 import { Prisma } from '@prisma/client';
@@ -10,29 +10,77 @@ export class CardsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list() {
-    const [items, total] = await this.prisma.$transaction([
+    const [items, batches, templates, total] = await this.prisma.$transaction([
       this.prisma.card.findMany({
         orderBy: { createdAt: 'desc' },
         take: 100,
         include: {
-          batch: { select: { id: true, name: true } },
+          batch: { select: { id: true, name: true, templateId: true } },
           usedBy: { select: { id: true, name: true, loginUsername: true } }
         }
       }),
+      this.prisma.cardBatch.findMany({ orderBy: { createdAt: 'desc' }, take: 100, include: { template: true, _count: { select: { cards: true } } } }),
+      this.prisma.cardTemplate.findMany({ orderBy: { createdAt: 'desc' } }),
       this.prisma.card.count()
     ]);
 
-    return { items, page: 1, pageSize: 100, total };
+    return { items, batches, templates, page: 1, pageSize: 100, total };
+  }
+
+  templates() {
+    return this.prisma.cardTemplate.findMany({ orderBy: [{ enabled: 'desc' }, { createdAt: 'desc' }] });
+  }
+
+  createTemplate(input: z.infer<typeof cardTemplateUpsertSchema>) {
+    return this.prisma.cardTemplate.create({
+      data: {
+        name: input.name,
+        amount: new Prisma.Decimal(input.amount),
+        quantity: input.quantity,
+        prefix: input.prefix || null,
+        enabled: input.enabled,
+        remark: input.remark || null
+      }
+    });
+  }
+
+  async updateTemplate(id: string, input: Partial<z.infer<typeof cardTemplateUpsertSchema>>) {
+    await this.ensureTemplate(id);
+    return this.prisma.cardTemplate.update({
+      where: { id },
+      data: {
+        name: input.name,
+        amount: input.amount === undefined ? undefined : new Prisma.Decimal(input.amount),
+        quantity: input.quantity,
+        prefix: input.prefix === undefined ? undefined : input.prefix || null,
+        enabled: input.enabled,
+        remark: input.remark === undefined ? undefined : input.remark || null
+      }
+    });
+  }
+
+  async deleteTemplate(id: string) {
+    await this.ensureTemplate(id);
+    await this.prisma.cardTemplate.delete({ where: { id } });
+    return { deleted: true, id };
   }
 
   async generate(input: z.infer<typeof cardGenerateSchema>) {
-    const amount = new Prisma.Decimal(input.amount);
-    const codes = Array.from({ length: input.quantity }, () => generateCardCode(input.prefix));
+    const template = input.templateId ? await this.prisma.cardTemplate.findUnique({ where: { id: input.templateId } }) : null;
+    if (input.templateId && !template) throw new NotFoundException('Card template not found');
+    if (template && !template.enabled) throw new BadRequestException('Card template is disabled');
+
+    const amount = new Prisma.Decimal(template?.amount ?? input.amount);
+    const quantity = template?.quantity ?? input.quantity;
+    const prefix = template?.prefix || input.prefix || '';
+    const codes = Array.from({ length: quantity }, () => generateCardCode(prefix));
     const batch = await this.prisma.cardBatch.create({
       data: {
-        name: input.name,
+        templateId: template?.id || null,
+        name: input.name || template?.name || 'Card batch',
         amount,
-        quantity: input.quantity,
+        quantity,
+        prefix: prefix || null,
         cards: {
           createMany: {
             data: codes.map((code) => ({
@@ -101,6 +149,30 @@ export class CardsService {
 
       return { customer: updatedCustomer, amount };
     });
+  }
+
+  async deleteCard(id: string) {
+    const card = await this.prisma.card.findUnique({ where: { id } });
+    if (!card) throw new NotFoundException('Card not found');
+    if (card.status === 'used') throw new BadRequestException('Used cards cannot be deleted');
+    await this.prisma.card.delete({ where: { id } });
+    return { deleted: true, id };
+  }
+
+  async deleteBatch(id: string) {
+    const batch = await this.prisma.cardBatch.findUnique({ where: { id }, include: { cards: { select: { status: true } } } });
+    if (!batch) throw new NotFoundException('Card batch not found');
+    if (batch.cards.some((card) => card.status === 'used')) throw new BadRequestException('Batches with used cards cannot be deleted');
+    await this.prisma.$transaction([
+      this.prisma.card.deleteMany({ where: { batchId: id } }),
+      this.prisma.cardBatch.delete({ where: { id } })
+    ]);
+    return { deleted: true, id };
+  }
+
+  private async ensureTemplate(id: string) {
+    const exists = await this.prisma.cardTemplate.findUnique({ where: { id }, select: { id: true } });
+    if (!exists) throw new NotFoundException('Card template not found');
   }
 }
 

@@ -84,6 +84,16 @@ function onChannelChange() {
   if (channel) rechargeForm.provider = channel.provider;
 }
 
+function providerLabel(provider: PaymentProvider) {
+  const labels: Record<PaymentProvider, string> = {
+    alipay: '支付宝',
+    wechat: '微信支付',
+    epay: '易支付',
+    bepusdt: 'BEpusdt'
+  };
+  return labels[provider];
+}
+
 onMounted(loadChannels);
 </script>
 
@@ -98,11 +108,14 @@ onMounted(loadChannels);
       <form @submit.prevent="createRechargeOrder">
         <select v-model="rechargeForm.channelId" :disabled="loading || !channels.length" @change="onChannelChange">
           <option value="" disabled>{{ loading ? '加载支付方式中' : '选择支付方式' }}</option>
-          <option v-for="channel in channels" :key="channel.id" :value="channel.id">{{ channel.name }}</option>
+          <option v-for="channel in channels" :key="channel.id" :value="channel.id">
+            {{ channel.name }} / {{ providerLabel(channel.provider) }}
+          </option>
         </select>
         <input v-model.number="rechargeForm.amount" type="number" min="0.01" step="0.01" placeholder="充值金额" />
         <button :disabled="recharging || !selectedChannel || rechargeForm.amount <= 0">{{ recharging ? '创建中' : '去支付' }}</button>
       </form>
+      <div v-if="selectedChannel" class="empty-hint">当前通道：{{ selectedChannel.name }} / {{ providerLabel(selectedChannel.provider) }}</div>
       <div v-if="!loading && !channels.length" class="empty-hint">管理员未启用在线支付方式</div>
       <div v-if="lastOrder?.qrCode" class="qr-box">
         <img v-if="qrImage" :src="qrImage" alt="支付二维码" />

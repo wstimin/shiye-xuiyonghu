@@ -4,6 +4,7 @@ import { CreditCard, LayoutDashboard, LogOut, Router, Settings, Users, WalletCar
 import { api } from './api';
 
 type SessionUser = { role: string; username: string };
+type Branding = { brandName: string; logoDataUrl: string };
 
 const nav = [
   { to: '/', label: '概览', icon: LayoutDashboard },
@@ -18,12 +19,24 @@ const checking = ref(true);
 const loggingIn = ref(false);
 const loginError = ref('');
 const user = ref<SessionUser | null>(null);
+const branding = reactive<Branding>({ brandName: '十夜管理后台', logoDataUrl: '' });
 const loginForm = reactive({ username: '', password: '' });
+
+async function loadBranding() {
+  try {
+    const payload = await api<{ settings: Branding }>('/api/public/branding');
+    branding.brandName = payload.settings.brandName || '十夜管理后台';
+    branding.logoDataUrl = payload.settings.logoDataUrl || '';
+  } catch {
+    branding.brandName = '十夜管理后台';
+    branding.logoDataUrl = '';
+  }
+}
 
 async function loadMe() {
   checking.value = true;
   try {
-    const session = await api<SessionUser>('/api/auth/me');
+    const session = await api<SessionUser>('/api/auth/me?entry=admin');
     user.value = session.role === 'admin' ? session : null;
   } catch {
     user.value = null;
@@ -38,7 +51,7 @@ async function login() {
   try {
     const session = await api<SessionUser>('/api/login', { method: 'POST', body: { ...loginForm, entry: 'admin' } });
     if (session.role !== 'admin') {
-      await api('/api/logout', { method: 'POST' }).catch(() => undefined);
+      await api('/api/logout', { method: 'POST', body: { entry: 'admin' } }).catch(() => undefined);
       throw new Error('当前账号不是管理员');
     }
     user.value = session;
@@ -51,11 +64,14 @@ async function login() {
 }
 
 async function logout() {
-  await api('/api/logout', { method: 'POST' }).catch(() => undefined);
+  await api('/api/logout', { method: 'POST', body: { entry: 'admin' } }).catch(() => undefined);
   user.value = null;
 }
 
-onMounted(loadMe);
+onMounted(async () => {
+  await loadBranding();
+  await loadMe();
+});
 </script>
 
 <template>
@@ -63,7 +79,11 @@ onMounted(loadMe);
 
   <div v-else-if="!user" class="login-screen">
     <form class="login-panel" @submit.prevent="login">
-      <h1>十夜管理后台</h1>
+      <div class="login-brand">
+        <img v-if="branding.logoDataUrl" :src="branding.logoDataUrl" alt="Logo" />
+        <span v-else>{{ branding.brandName.slice(0, 1) }}</span>
+      </div>
+      <h1>{{ branding.brandName }}</h1>
       <p>管理员登录</p>
       <el-alert v-if="loginError" :title="loginError" type="error" show-icon :closable="false" />
       <el-input v-model="loginForm.username" placeholder="账号" autocomplete="username" />
@@ -74,7 +94,11 @@ onMounted(loadMe);
 
   <el-container v-else class="shell">
     <el-aside width="220px" class="sidebar">
-      <div class="brand">十夜管理后台</div>
+      <div class="brand">
+        <img v-if="branding.logoDataUrl" :src="branding.logoDataUrl" alt="Logo" />
+        <span v-else class="brand-mark">{{ branding.brandName.slice(0, 1) }}</span>
+        <strong>{{ branding.brandName }}</strong>
+      </div>
       <router-link v-for="item in nav" :key="item.to" :to="item.to" class="nav-item">
         <component :is="item.icon" :size="18" />
         <span>{{ item.label }}</span>
