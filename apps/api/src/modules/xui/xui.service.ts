@@ -178,7 +178,8 @@ export class XuiService {
     if (usedPorts.has(port)) throw new BadRequestException(`3x-ui 入站端口 ${port} 已被占用`);
 
     const tag = this.serviceInboundTag();
-    const payload = this.buildInboundPayload({ ...input, port, tag });
+    const streamSettings = await this.defaultStreamSettings(client, input.encryption || 'none');
+    const payload = this.buildInboundPayload({ ...input, port, tag, streamSettings });
     const response = await client.addInbound(payload);
     this.assertXuiSuccess(response);
 
@@ -467,7 +468,7 @@ export class XuiService {
     };
   }
 
-  private buildInboundPayload(input: CreateServiceInboundInput & { port: number; tag: string }) {
+  private buildInboundPayload(input: CreateServiceInboundInput & { port: number; tag: string; streamSettings: Record<string, unknown> }) {
     const protocol = input.protocol;
     const remark = input.remark || input.name;
     return {
@@ -480,8 +481,8 @@ export class XuiService {
       listen: '',
       port: input.port,
       protocol,
-      settings: this.defaultInboundSettings(protocol, input.encryption),
-      streamSettings: this.defaultStreamSettings(),
+      settings: this.defaultInboundSettings(protocol),
+      streamSettings: input.streamSettings,
       sniffing: {
         enabled: true,
         destOverride: ['http', 'tls', 'quic', 'fakedns'],
@@ -493,13 +494,13 @@ export class XuiService {
     };
   }
 
-  private defaultInboundSettings(protocol: string, encryption = 'none') {
+  private defaultInboundSettings(protocol: string) {
     if (protocol === 'vless') return { clients: [], decryption: 'none', fallbacks: [] };
     if (protocol === 'vmess') return { clients: [] };
     if (protocol === 'trojan') return { clients: [], fallbacks: [] };
     if (protocol === 'shadowsocks') {
       return {
-        method: encryption && encryption !== 'none' && encryption !== 'auto' ? encryption : 'aes-128-gcm',
+        method: 'aes-128-gcm',
         password: this.randomSecret(16),
         network: 'tcp,udp',
         clients: []
@@ -511,12 +512,68 @@ export class XuiService {
     return { clients: [] };
   }
 
-  private defaultStreamSettings() {
-    return {
+  private async defaultStreamSettings(client: XuiClient, security: string) {
+    const base: Record<string, unknown> = {
       network: 'tcp',
-      security: 'none',
       tcpSettings: { acceptProxyProtocol: false, header: { type: 'none' } }
     };
+    if (security === 'tls') {
+      const certFiles = await this.resolveWebCertFiles(client);
+      return {
+        ...base,
+        security: 'tls',
+        tlsSettings: {
+          serverName: '',
+          minVersion: '1.2',
+          maxVersion: '',
+          cipherSuites: '',
+          rejectUnknownSni: false,
+          certificates: [{ certificateFile: certFiles.certFile, keyFile: certFiles.keyFile, ocspStapling: 3600 }],
+          alpn: ['http/1.1']
+        }
+      };
+    }
+    if (security === 'reality') {
+      const keys = await this.resolveRealityKeys(client);
+      return {
+        ...base,
+        security: 'reality',
+        realitySettings: {
+          show: false,
+          xver: 0,
+          dest: 'www.microsoft.com:443',
+          serverNames: ['www.microsoft.com'],
+          privateKey: keys.privateKey,
+          publicKey: keys.publicKey,
+          minClient: '',
+          maxClient: '',
+          maxTimediff: 0,
+          shortIds: [this.randomShortId()],
+          settings: { publicKey: keys.publicKey, fingerprint: 'chrome', serverName: 'www.microsoft.com', spiderX: '/' }
+        }
+      };
+    }
+    return { ...base, security: 'none' };
+  }
+
+  private async resolveWebCertFiles(client: XuiClient) {
+    const payload = await client.getWebCertFiles();
+    this.assertXuiSuccess(payload);
+    const object = this.xuiObject(this.xuiObject(payload).obj || this.xuiObject(payload).data || payload);
+    const certFile = String(object.certFile || object.certificateFile || object.cert || object.certPath || object.publicKeyPath || '').trim();
+    const keyFile = String(object.keyFile || object.privateKeyFile || object.key || object.keyPath || object.privateKeyPath || '').trim();
+    if (!certFile || !keyFile) throw new BadGatewayException('3x-ui 没有返回可用的 TLS 证书路径，请先在 3x-ui 面板配置 Web 证书，或选择 Reality/none');
+    return { certFile, keyFile };
+  }
+
+  private async resolveRealityKeys(client: XuiClient) {
+    const payload = await client.getNewX25519Cert();
+    this.assertXuiSuccess(payload);
+    const object = this.xuiObject(this.xuiObject(payload).obj || this.xuiObject(payload).data || payload);
+    const privateKey = String(object.privateKey || object.private_key || '').trim();
+    const publicKey = String(object.publicKey || object.public_key || '').trim();
+    if (!privateKey || !publicKey) throw new BadGatewayException('3x-ui 没有返回 Reality X25519 密钥');
+    return { privateKey, publicKey };
   }
 
   private async linksForClient(client: XuiClient, email: string) {
@@ -685,6 +742,10 @@ export class XuiService {
 
   private randomSecret(bytes = 24) {
     return randomBytes(bytes).toString('base64url');
+  }
+
+  private randomShortId() {
+    return randomBytes(8).toString('hex');
   }
 
   private async writeSyncLog(serverId: string | null, action: string, status: string, message: string, detail: unknown) {

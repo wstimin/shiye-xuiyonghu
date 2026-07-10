@@ -89,6 +89,14 @@ export class XuiClient {
     return this.request(`/panel/api/inbounds/get/${encodeURIComponent(String(id))}`);
   }
 
+  getWebCertFiles() {
+    return this.request('/panel/api/server/getWebCertFiles');
+  }
+
+  getNewX25519Cert() {
+    return this.request('/panel/api/server/getNewX25519Cert');
+  }
+
   addInbound(body: unknown) {
     return this.request('/panel/api/inbounds/add', { method: 'POST', body });
   }

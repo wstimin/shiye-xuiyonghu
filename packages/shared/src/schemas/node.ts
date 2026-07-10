@@ -18,12 +18,8 @@ export const serviceNodeProtocolSchema = z.enum(serviceNodeProtocolValues);
 
 export const serviceNodeEncryptionValues = [
   'none',
-  'auto',
-  'aes-128-gcm',
-  'chacha20-poly1305',
-  '2022-blake3-aes-128-gcm',
-  '2022-blake3-aes-256-gcm',
-  '2022-blake3-chacha20-poly1305'
+  'tls',
+  'reality'
 ] as const;
 
 export const serviceNodeEncryptionSchema = z.enum(serviceNodeEncryptionValues);

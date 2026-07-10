@@ -44,12 +44,8 @@ const protocolOptions = [
 ];
 const encryptionOptions = [
   { label: 'none', value: 'none' },
-  { label: 'auto', value: 'auto' },
-  { label: 'aes-128-gcm', value: 'aes-128-gcm' },
-  { label: 'chacha20-poly1305', value: 'chacha20-poly1305' },
-  { label: '2022-blake3-aes-128-gcm', value: '2022-blake3-aes-128-gcm' },
-  { label: '2022-blake3-aes-256-gcm', value: '2022-blake3-aes-256-gcm' },
-  { label: '2022-blake3-chacha20-poly1305', value: '2022-blake3-chacha20-poly1305' }
+  { label: 'TLS', value: 'tls' },
+  { label: 'Reality', value: 'reality' }
 ];
 
 const servers = ref<XuiServer[]>([]);
@@ -236,7 +232,7 @@ onMounted(loadNodes);
         <template #default="{ row }: { row: ServiceNode }"><el-tag :type="row.config?.remoteManaged ? 'success' : 'info'">{{ remoteModeLabel(row) }}</el-tag></template>
       </el-table-column>
       <el-table-column prop="protocol" label="节点类型" width="110" />
-      <el-table-column label="加密" width="190">
+      <el-table-column label="传输安全" width="120">
         <template #default="{ row }: { row: ServiceNode }">{{ row.config?.encryption || 'none' }}</template>
       </el-table-column>
       <el-table-column prop="priceMonthly" label="月价格" width="100" />
@@ -281,7 +277,7 @@ onMounted(loadNodes);
           <el-option v-for="item in protocolOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
       </el-form-item>
-      <el-form-item label="加密类型">
+      <el-form-item label="传输安全">
         <el-select v-model="form.encryption" style="width: 100%">
           <el-option v-for="item in encryptionOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
