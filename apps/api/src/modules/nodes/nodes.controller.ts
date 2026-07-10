@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { customerNodeCreateSchema, serviceNodeUpsertSchema, xuiServerUpsertSchema } from '@shiye/shared';
+import { customerNodeCreateSchema, serviceNodeUpsertSchema, socksNodeUpsertSchema, xuiServerUpsertSchema } from '@shiye/shared';
 import type { z } from 'zod';
 import { AuthGuard } from '../../shared/auth.guard.js';
 import { CurrentUser } from '../../shared/current-user.decorator.js';
@@ -51,6 +51,26 @@ export class NodesController {
   @UseGuards(AuthGuard)
   @Roles('admin')
   deleteServiceNode(@Param('id') id: string) { return this.nodes.deleteServiceNode(id); }
+
+  @Get('admin/socks-nodes')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  socksNodes() { return this.nodes.listSocksNodes(); }
+
+  @Post('admin/socks-nodes')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  createSocksNode(@Body(new ZodValidationPipe(socksNodeUpsertSchema)) body: z.infer<typeof socksNodeUpsertSchema>) { return this.nodes.createSocksNode(body); }
+
+  @Patch('admin/socks-nodes/:id')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  updateSocksNode(@Param('id') id: string, @Body(new ZodValidationPipe(socksNodeUpsertSchema.partial())) body: Partial<z.infer<typeof socksNodeUpsertSchema>>) { return this.nodes.updateSocksNode(id, body); }
+
+  @Delete('admin/socks-nodes/:id')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  deleteSocksNode(@Param('id') id: string) { return this.nodes.deleteSocksNode(id); }
 
   @Get('user/nodes')
   @UseGuards(AuthGuard)

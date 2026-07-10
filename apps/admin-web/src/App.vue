@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
-import { CreditCard, LayoutDashboard, LogOut, ReceiptText, Router, Settings, Users, WalletCards } from 'lucide-vue-next';
+import { CreditCard, LayoutDashboard, LogOut, Network, ReceiptText, Router, Settings, ShieldCheck, Users, WalletCards } from 'lucide-vue-next';
 import { api } from './api';
 
 type SessionUser = { role: string; username: string };
 type Branding = { brandName: string; logoDataUrl: string };
 
+const fallbackBrandName = '十夜管理后台';
 const nav = [
   { to: '/', label: '概览', icon: LayoutDashboard },
   { to: '/customers', label: '用户', icon: Users },
-  { to: '/nodes', label: '节点', icon: Router },
+  { to: '/xui-servers', label: '3x-ui 服务器', icon: Network },
+  { to: '/nodes', label: '服务节点', icon: Router },
+  { to: '/socks-nodes', label: 'Socks 节点', icon: ShieldCheck },
   { to: '/finance', label: '财务', icon: WalletCards },
   { to: '/cards', label: '卡密', icon: CreditCard },
   { to: '/payments', label: '支付', icon: ReceiptText },
@@ -20,17 +23,19 @@ const checking = ref(true);
 const loggingIn = ref(false);
 const loginError = ref('');
 const user = ref<SessionUser | null>(null);
-const branding = reactive<Branding>({ brandName: '十夜管理后台', logoDataUrl: '' });
+const branding = reactive<Branding>({ brandName: fallbackBrandName, logoDataUrl: '' });
 const loginForm = reactive({ username: '', password: '' });
 
 async function loadBranding() {
   try {
     const payload = await api<{ settings: Branding }>('/api/public/branding');
-    branding.brandName = payload.settings.brandName || '十夜管理后台';
+    branding.brandName = payload.settings.brandName || fallbackBrandName;
     branding.logoDataUrl = payload.settings.logoDataUrl || '';
   } catch {
-    branding.brandName = '十夜管理后台';
+    branding.brandName = fallbackBrandName;
     branding.logoDataUrl = '';
+  } finally {
+    applyBrowserBranding(branding);
   }
 }
 
@@ -67,6 +72,21 @@ async function login() {
 async function logout() {
   await api('/api/logout', { method: 'POST', body: { entry: 'admin' } }).catch(() => undefined);
   user.value = null;
+}
+
+function applyBrowserBranding(settings: Branding) {
+  document.title = settings.brandName || fallbackBrandName;
+  const icon = ensureFaviconElement();
+  if (settings.logoDataUrl) icon.href = settings.logoDataUrl;
+}
+
+function ensureFaviconElement() {
+  const existing = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+  if (existing) return existing;
+  const link = document.createElement('link');
+  link.rel = 'icon';
+  document.head.appendChild(link);
+  return link;
 }
 
 onMounted(async () => {

@@ -1,10 +1,16 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { customerNodeCreateSchema, serviceNodeUpsertSchema, xuiServerUpsertSchema } from '@shiye/shared';
+import { customerNodeCreateSchema, serviceNodeUpsertSchema, socksNodeUpsertSchema, xuiServerUpsertSchema } from '@shiye/shared';
 import type { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { EncryptionService } from '../security/encryption.service.js';
 import { XuiService } from '../xui/xui.service.js';
+
+type ServiceNodeConfig = {
+  encryption?: string;
+  socksRelayEnabled?: boolean;
+  socksNodeId?: string | null;
+};
 
 @Injectable()
 export class NodesService {
@@ -64,12 +70,14 @@ export class NodesService {
 
   async createServiceNode(input: z.infer<typeof serviceNodeUpsertSchema>) {
     await this.ensureServer(input.serverId);
+    const config = await this.serviceNodeConfig(input);
     return this.prisma.serviceNode.create({
       data: {
         serverId: input.serverId,
         name: input.name,
         inboundId: input.inboundId || null,
         protocol: input.protocol,
+        config: this.toJsonValue(config),
         priceMonthly: new Prisma.Decimal(input.priceMonthly),
         trafficLimitGb: new Prisma.Decimal(input.trafficLimitGb),
         enabled: input.enabled,
@@ -80,8 +88,9 @@ export class NodesService {
   }
 
   async updateServiceNode(id: string, input: Partial<z.infer<typeof serviceNodeUpsertSchema>>) {
-    await this.ensureServiceNode(id);
+    const current = await this.ensureServiceNode(id);
     if (input.serverId) await this.ensureServer(input.serverId);
+    const config = await this.serviceNodeConfig(input, current.config);
     return this.prisma.serviceNode.update({
       where: { id },
       data: {
@@ -89,6 +98,7 @@ export class NodesService {
         name: input.name,
         inboundId: input.inboundId === undefined ? undefined : input.inboundId || null,
         protocol: input.protocol,
+        config: this.toJsonValue(config),
         priceMonthly: input.priceMonthly === undefined ? undefined : new Prisma.Decimal(input.priceMonthly),
         trafficLimitGb: input.trafficLimitGb === undefined ? undefined : new Prisma.Decimal(input.trafficLimitGb),
         enabled: input.enabled,
@@ -99,8 +109,9 @@ export class NodesService {
   }
 
   async deleteServiceNode(id: string) {
-    await this.ensureServiceNode(id);
+    const current = await this.ensureServiceNode(id);
     await this.xui.deleteServiceNodeClients(id);
+    if (current.inboundId) await this.xui.syncServiceNodeRemoteConfig(id, { removeOnly: true });
     await this.prisma.$transaction([
       this.prisma.customerNode.deleteMany({ where: { serviceNodeId: id } }),
       this.prisma.serviceNode.delete({ where: { id } })
@@ -108,19 +119,61 @@ export class NodesService {
     return { deleted: true, id };
   }
 
+  async listSocksNodes() {
+    const nodes = await this.prisma.socksNode.findMany({ orderBy: { createdAt: 'desc' } });
+    return nodes.map(maskSocksNode);
+  }
+
+  async createSocksNode(input: z.infer<typeof socksNodeUpsertSchema>) {
+    const node = await this.prisma.socksNode.create({
+      data: {
+        name: input.name,
+        host: input.host,
+        port: input.port,
+        username: input.username || null,
+        passwordEnc: this.encryption.encryptNullable(input.password),
+        enabled: input.enabled,
+        remark: input.remark || null
+      }
+    });
+    return maskSocksNode(node);
+  }
+
+  async updateSocksNode(id: string, input: Partial<z.infer<typeof socksNodeUpsertSchema>>) {
+    await this.ensureSocksNode(id);
+    const node = await this.prisma.socksNode.update({
+      where: { id },
+      data: {
+        name: input.name,
+        host: input.host,
+        port: input.port,
+        username: input.username === undefined ? undefined : input.username || null,
+        passwordEnc: input.password === undefined ? undefined : this.encryption.encryptNullable(input.password),
+        enabled: input.enabled,
+        remark: input.remark === undefined ? undefined : input.remark || null
+      }
+    });
+    return maskSocksNode(node);
+  }
+
+  async deleteSocksNode(id: string) {
+    await this.ensureSocksNode(id);
+    const serviceNodes = await this.prisma.serviceNode.findMany({ select: { id: true, name: true, config: true } });
+    const used = serviceNodes.find((node) => jsonObject(node.config).socksNodeId === id);
+    if (used) throw new BadRequestException(`Socks 节点正在被服务节点“${used.name}”使用，请先关闭或更换该服务节点的 Socks 中转`);
+    await this.prisma.socksNode.delete({ where: { id } });
+    return { deleted: true, id };
+  }
+
   async listUserNodes(customerId: string) {
     const nodes = await this.prisma.customerNode.findMany({
       where: { customerId },
       orderBy: { createdAt: 'desc' },
-      include: {
-        serviceNode: {
-          include: { server: { select: { id: true, name: true, baseUrl: true } } }
-        }
-      }
+      include: { serviceNode: { include: { server: { select: { id: true, name: true, baseUrl: true } } } } }
     });
     return Promise.all(nodes.map(async (node) => {
       const links = await this.xui.customerNodeLinks(customerId, node.id).catch(() => [] as string[]);
-      return { ...node, links, subId: node.config && typeof node.config === 'object' && !Array.isArray(node.config) ? (node.config as Record<string, unknown>).subId : node.xuiEmail };
+      return { ...node, links, subId: jsonObject(node.config).subId || node.xuiEmail };
     }));
   }
 
@@ -129,8 +182,8 @@ export class NodesService {
       this.prisma.customer.findUnique({ where: { id: customerId } }),
       this.prisma.serviceNode.findUnique({ where: { id: input.serviceNodeId } })
     ]);
-    if (!customer) throw new NotFoundException('用户不存在');
-    if (!serviceNode) throw new NotFoundException('服务节点不存在');
+    if (!customer) throw new NotFoundException('Customer not found');
+    if (!serviceNode) throw new NotFoundException('Service node not found');
 
     const xuiEmail = input.xuiEmail || `${customer.loginUsername}-${serviceNode.id.slice(0, 6)}@shiye.local`;
     const node = await this.prisma.customerNode.create({
@@ -159,24 +212,19 @@ export class NodesService {
   }
 
   async updateCustomerNode(customerId: string, customerNodeId: string, input: Partial<z.infer<typeof customerNodeCreateSchema>>) {
-    const current = await this.prisma.customerNode.findFirst({
-      where: { id: customerNodeId, customerId },
-      include: { serviceNode: true }
-    });
-    if (!current) throw new NotFoundException('用户节点不存在');
+    const current = await this.prisma.customerNode.findFirst({ where: { id: customerNodeId, customerId }, include: { serviceNode: true } });
+    if (!current) throw new NotFoundException('Customer node not found');
 
     const serviceNodeId = input.serviceNodeId || current.serviceNodeId;
-    const serviceNode = serviceNodeId === current.serviceNodeId
-      ? current.serviceNode
-      : await this.prisma.serviceNode.findUnique({ where: { id: serviceNodeId } });
-    if (!serviceNode) throw new NotFoundException('服务节点不存在');
+    const serviceNode = serviceNodeId === current.serviceNodeId ? current.serviceNode : await this.prisma.serviceNode.findUnique({ where: { id: serviceNodeId } });
+    if (!serviceNode) throw new NotFoundException('Service node not found');
 
     if (serviceNodeId !== current.serviceNodeId) {
       const duplicated = await this.prisma.customerNode.findUnique({
         where: { customerId_serviceNodeId: { customerId, serviceNodeId } },
         select: { id: true }
       });
-      if (duplicated) throw new BadRequestException('该用户已绑定这个服务节点');
+      if (duplicated) throw new BadRequestException('Customer already bound to this service node');
     }
 
     const nextXuiEmail = input.xuiEmail === undefined || input.xuiEmail === '' ? current.xuiEmail : input.xuiEmail;
@@ -206,7 +254,7 @@ export class NodesService {
 
   async unbindCustomerNode(customerId: string, customerNodeId: string) {
     const node = await this.prisma.customerNode.findFirst({ where: { id: customerNodeId, customerId }, select: { id: true } });
-    if (!node) throw new NotFoundException('用户节点不存在');
+    if (!node) throw new NotFoundException('Customer node not found');
     await this.xui.deleteCustomerNode(customerId, customerNodeId);
     await this.prisma.customerNode.delete({ where: { id: customerNodeId } });
     return { deleted: true, id: customerNodeId };
@@ -214,16 +262,53 @@ export class NodesService {
 
   private async ensureServer(id: string) {
     const exists = await this.prisma.xuiServer.findUnique({ where: { id }, select: { id: true } });
-    if (!exists) throw new NotFoundException('3x-ui 服务器不存在');
+    if (!exists) throw new NotFoundException('3x-ui server not found');
   }
 
   private async ensureServiceNode(id: string) {
-    const exists = await this.prisma.serviceNode.findUnique({ where: { id }, select: { id: true } });
-    if (!exists) throw new NotFoundException('服务节点不存在');
+    const exists = await this.prisma.serviceNode.findUnique({ where: { id }, select: { id: true, inboundId: true, config: true } });
+    if (!exists) throw new NotFoundException('Service node not found');
+    return exists;
+  }
+
+  private async ensureSocksNode(id: string) {
+    const exists = await this.prisma.socksNode.findUnique({ where: { id }, select: { id: true } });
+    if (!exists) throw new NotFoundException('Socks node not found');
+  }
+
+  private async serviceNodeConfig(input: Partial<z.infer<typeof serviceNodeUpsertSchema>>, current?: Prisma.JsonValue | null): Promise<ServiceNodeConfig> {
+    const previous = jsonObject(current) as ServiceNodeConfig;
+    const next: ServiceNodeConfig = {
+      ...previous,
+      encryption: input.encryption === undefined ? previous.encryption || 'none' : input.encryption,
+      socksRelayEnabled: input.socksRelayEnabled === undefined ? Boolean(previous.socksRelayEnabled) : input.socksRelayEnabled,
+      socksNodeId: input.socksNodeId === undefined ? previous.socksNodeId || null : input.socksNodeId || null
+    };
+    if (next.socksRelayEnabled) {
+      if (!next.socksNodeId) throw new BadRequestException('A Socks node is required when Socks relay is enabled');
+      const socks = await this.prisma.socksNode.findUnique({ where: { id: next.socksNodeId }, select: { id: true, enabled: true } });
+      if (!socks) throw new NotFoundException('Socks node not found');
+      if (!socks.enabled) throw new BadRequestException('Selected Socks node is disabled');
+    }
+    return next;
+  }
+
+  private toJsonValue(value: unknown): Prisma.InputJsonValue {
+    return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
   }
 }
 
 function maskXuiServer<T extends { passwordEnc: string | null; tokenEnc: string | null }>(server: T) {
   const { passwordEnc, tokenEnc, ...safe } = server;
   return { ...safe, hasPassword: Boolean(passwordEnc), hasToken: Boolean(tokenEnc) };
+}
+
+function maskSocksNode<T extends { passwordEnc: string | null }>(node: T) {
+  const { passwordEnc, ...safe } = node;
+  return { ...safe, hasPassword: Boolean(passwordEnc) };
+}
+
+function jsonObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 }

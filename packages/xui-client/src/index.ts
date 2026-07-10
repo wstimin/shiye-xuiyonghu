@@ -15,6 +15,8 @@ export type XuiRequestOptions = {
   headers?: Record<string, string>;
 };
 
+export type XuiFormRequestOptions = Omit<XuiRequestOptions, 'body'> & { body?: Record<string, unknown> };
+
 export class XuiClientError extends Error {
   constructor(message: string, readonly status?: number, readonly payload?: unknown) {
     super(message);
@@ -50,12 +52,45 @@ export class XuiClient {
     return payload as T;
   }
 
+  async formRequest<T>(endpoint: string, options: XuiFormRequestOptions = {}): Promise<T> {
+    const headers: Record<string, string> = {
+      'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      ...this.authHeaders(),
+      ...this.cookieHeaders(),
+      ...options.headers
+    };
+
+    const response = await this.fetchImpl(this.url(endpoint), {
+      method: options.method || (options.body ? 'POST' : 'GET'),
+      headers,
+      body: options.body ? this.encodeForm(options.body) : undefined
+    });
+
+    const text = await response.text();
+    this.rememberCookies(response.headers);
+    const payload = text ? this.parse(text) : null;
+    if (!response.ok) throw new XuiClientError(`3x-ui request failed: ${response.status}`, response.status, payload);
+    return payload as T;
+  }
+
   login(body: { username: string; password: string }) {
     return this.request('/login', { method: 'POST', body });
   }
 
   listInbounds() {
     return this.request('/panel/api/inbounds/list');
+  }
+
+  inboundOptions() {
+    return this.request('/panel/api/inbounds/options');
+  }
+
+  getInbound(id: number) {
+    return this.request(`/panel/api/inbounds/get/${encodeURIComponent(String(id))}`);
+  }
+
+  updateInbound(id: number, body: unknown) {
+    return this.request(`/panel/api/inbounds/update/${encodeURIComponent(String(id))}`, { method: 'POST', body });
   }
 
   addClient(body: unknown) {
@@ -81,6 +116,14 @@ export class XuiClient {
 
   clientLinks(email: string) {
     return this.request(`/panel/api/clients/links/${encodeURIComponent(email)}`);
+  }
+
+  getXrayConfig() {
+    return this.request('/panel/api/xray/', { method: 'POST' });
+  }
+
+  updateXrayConfig(body: { xraySetting: string; outboundTestUrl?: string }) {
+    return this.formRequest('/panel/api/xray/update', { method: 'POST', body });
   }
 
   private url(endpoint: string) {
@@ -115,6 +158,15 @@ export class XuiClient {
     }
 
     this.sessionCookie = Array.from(jar.entries()).map(([name, value]) => `${name}=${value}`).join('; ');
+  }
+
+  private encodeForm(body: Record<string, unknown>) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(body)) {
+      if (value === undefined) continue;
+      params.append(key, value === null ? '' : String(value));
+    }
+    return params.toString();
   }
 
   private readSetCookieHeaders(headers: Headers): string[] {

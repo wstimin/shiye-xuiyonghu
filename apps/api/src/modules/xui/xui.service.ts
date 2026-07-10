@@ -24,6 +24,14 @@ type SyncOptions = {
   createIfMissing?: boolean;
 };
 
+type ServiceNodeConfig = {
+  encryption?: string;
+  socksRelayEnabled?: boolean;
+  socksNodeId?: string | null;
+};
+
+const SHIYE_ROUTE_MARK = 'shiye-service-node';
+
 @Injectable()
 export class XuiService {
   constructor(private readonly prisma: PrismaService, private readonly encryption: EncryptionService) {}
@@ -73,6 +81,72 @@ export class XuiService {
 
     const success = results.filter((item) => item.synced).length;
     return { serviceNodeId, serviceNodeName: serviceNode.name, total: results.length, success, failed: results.length - success, results };
+  }
+
+  async syncServiceNodeRemoteConfig(serviceNodeId: string, options: { removeOnly?: boolean } = {}) {
+    const serviceNode = await this.prisma.serviceNode.findUnique({ where: { id: serviceNodeId }, include: { server: true } });
+    if (!serviceNode) throw new NotFoundException('Service node not found');
+    if (!serviceNode.inboundId) throw new BadRequestException('Service node missing 3x-ui inbound ID');
+
+    const config = this.xuiObject(serviceNode.config) as ServiceNodeConfig;
+    const client = await this.createAuthenticatedClient(serviceNode.server);
+    const inboundPayload = await client.getInbound(serviceNode.inboundId);
+    this.assertXuiSuccess(inboundPayload);
+    const inbound = this.xuiObject(this.xuiObject(inboundPayload).obj || this.xuiObject(inboundPayload).data || inboundPayload);
+    const inboundTag = String(inbound.tag || `inbound-${serviceNode.inboundId}`);
+    const outboundTag = this.socksOutboundTag(serviceNode.id);
+
+    const xrayPayload = await client.getXrayConfig();
+    this.assertXuiSuccess(xrayPayload);
+    const xrayObj = this.xuiObject(this.xuiObject(xrayPayload).obj || this.xuiObject(xrayPayload).data || xrayPayload);
+    const rawSetting = xrayObj.xraySetting ?? xrayObj;
+    const xraySetting = this.xuiObject(rawSetting);
+    if (!Object.keys(xraySetting).length) throw new BadGatewayException('3x-ui returned an empty Xray config');
+
+    const nextConfig = this.removeManagedSocksRoute(xraySetting, serviceNode.id);
+    let action: 'removed' | 'updated' = 'removed';
+    let socksDetail: Record<string, unknown> | null = null;
+
+    if (!options.removeOnly && config.socksRelayEnabled) {
+      if (!config.socksNodeId) throw new BadRequestException('Socks relay enabled but no Socks node selected');
+      const socksNode = await this.prisma.socksNode.findUnique({ where: { id: config.socksNodeId } });
+      if (!socksNode) throw new NotFoundException('Socks node not found');
+      if (!socksNode.enabled) throw new BadRequestException('Selected Socks node is disabled');
+
+      const outbound = this.buildSocksOutbound(outboundTag, socksNode);
+      const outbounds = Array.isArray(nextConfig.outbounds) ? nextConfig.outbounds : [];
+      outbounds.push(outbound);
+      nextConfig.outbounds = outbounds;
+
+      const routing = this.ensureRouting(nextConfig);
+      const rules = Array.isArray(routing.rules) ? routing.rules : [];
+      rules.push({
+        type: 'field',
+        inboundTag: [inboundTag],
+        outboundTag,
+        _shiyeManaged: true,
+        _shiyeServiceNodeId: serviceNode.id,
+        _shiyeMark: SHIYE_ROUTE_MARK
+      });
+      routing.rules = rules;
+      nextConfig.routing = routing;
+      action = 'updated';
+      socksDetail = { socksNodeId: socksNode.id, host: socksNode.host, port: socksNode.port, username: socksNode.username || '' };
+    }
+
+    const outboundTestUrl = typeof xrayObj.outboundTestUrl === 'string' ? xrayObj.outboundTestUrl : undefined;
+    const response = await client.updateXrayConfig({ xraySetting: JSON.stringify(nextConfig, null, 2), outboundTestUrl });
+    this.assertXuiSuccess(response);
+    await this.writeSyncLog(serviceNode.serverId, 'service-node-config-sync', 'success', `Service node ${serviceNode.name} remote config ${action}`, {
+      serviceNodeId,
+      inboundId: serviceNode.inboundId,
+      inboundTag,
+      outboundTag,
+      action,
+      socks: socksDetail,
+      response: this.toJsonValue(response)
+    });
+    return { synced: true, action, serviceNodeId, inboundId: serviceNode.inboundId, inboundTag, outboundTag, socks: socksDetail };
   }
 
   async syncServer(serverId: string) {
@@ -328,6 +402,51 @@ export class XuiService {
       if (clients.some((item: unknown) => this.clientEmailOf(item) === email)) return { exists: true, raw: inbound };
     }
     return { exists: false, raw: null };
+  }
+
+  private removeManagedSocksRoute(config: Record<string, unknown>, serviceNodeId: string) {
+    const next: Record<string, unknown> = { ...config };
+    const outboundTag = this.socksOutboundTag(serviceNodeId);
+    const outbounds = Array.isArray(next.outbounds) ? next.outbounds : [];
+    next.outbounds = outbounds.filter((item) => this.xuiObject(item).tag !== outboundTag);
+
+    const routing = this.xuiObject(next.routing);
+    if (Object.keys(routing).length) {
+      const rules = Array.isArray(routing.rules) ? routing.rules : [];
+      routing.rules = rules.filter((item) => {
+        const rule = this.xuiObject(item);
+        return rule._shiyeServiceNodeId !== serviceNodeId && rule.outboundTag !== outboundTag;
+      });
+      next.routing = routing;
+    }
+
+    return next;
+  }
+
+  private buildSocksOutbound(tag: string, socksNode: { host: string; port: number; username: string | null; passwordEnc: string | null }) {
+    const user = socksNode.username
+      ? [{ user: socksNode.username, pass: socksNode.passwordEnc ? this.encryption.decrypt(socksNode.passwordEnc) : '' }]
+      : undefined;
+    return {
+      tag,
+      protocol: 'socks',
+      settings: {
+        servers: [{ address: socksNode.host, port: socksNode.port, users: user }]
+      },
+      streamSettings: { network: 'tcp' },
+      _shiyeManaged: true,
+      _shiyeMark: SHIYE_ROUTE_MARK
+    };
+  }
+
+  private ensureRouting(config: Record<string, unknown>) {
+    const routing = this.xuiObject(config.routing);
+    if (!Array.isArray(routing.rules)) routing.rules = [];
+    return routing;
+  }
+
+  private socksOutboundTag(serviceNodeId: string) {
+    return `shiye-socks-${serviceNodeId.slice(0, 18)}`;
   }
 
   private assertXuiSuccess(payload: unknown) {

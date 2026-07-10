@@ -1,21 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { RefreshCw, Wifi } from 'lucide-vue-next';
+import { RefreshCw, UploadCloud } from 'lucide-vue-next';
 import { api } from '../api';
 
-type XuiServer = {
-  id: string;
-  name: string;
-  baseUrl: string;
-  basePath?: string | null;
-  username?: string | null;
-  enabled: boolean;
-  remark?: string | null;
-  hasPassword?: boolean;
-  hasToken?: boolean;
-};
-
+type XuiServer = { id: string; name: string; baseUrl: string; enabled: boolean };
+type SocksNode = { id: string; name: string; host: string; port: number; enabled: boolean };
+type ServiceNodeConfig = { encryption?: string; socksRelayEnabled?: boolean; socksNodeId?: string | null };
 type ServiceNode = {
   id: string;
   serverId: string;
@@ -26,311 +17,263 @@ type ServiceNode = {
   enabled: boolean;
   inboundId?: number | null;
   remark?: string | null;
+  config?: ServiceNodeConfig | null;
   server?: XuiServer;
 };
-
 type SyncResult = { total: number; success: number; failed: number };
 
+const protocolOptions = [
+  { label: 'VLESS', value: 'vless' },
+  { label: 'VMess', value: 'vmess' },
+  { label: 'Trojan', value: 'trojan' },
+  { label: 'Shadowsocks', value: 'shadowsocks' },
+  { label: 'Hysteria', value: 'hysteria' },
+  { label: 'Socks', value: 'socks' },
+  { label: 'HTTP', value: 'http' },
+  { label: 'Mixed', value: 'mixed' },
+  { label: 'WireGuard', value: 'wireguard' },
+  { label: 'Dokodemo', value: 'dokodemo' },
+  { label: 'Tunnel', value: 'tunnel' }
+];
+const encryptionOptions = [
+  { label: 'none', value: 'none' },
+  { label: 'auto', value: 'auto' },
+  { label: 'aes-128-gcm', value: 'aes-128-gcm' },
+  { label: 'chacha20-poly1305', value: 'chacha20-poly1305' },
+  { label: '2022-blake3-aes-128-gcm', value: '2022-blake3-aes-128-gcm' },
+  { label: '2022-blake3-aes-256-gcm', value: '2022-blake3-aes-256-gcm' },
+  { label: '2022-blake3-chacha20-poly1305', value: '2022-blake3-chacha20-poly1305' }
+];
+
 const servers = ref<XuiServer[]>([]);
+const socksNodes = ref<SocksNode[]>([]);
 const nodes = ref<ServiceNode[]>([]);
 const loading = ref(false);
-const savingServer = ref(false);
-const savingNode = ref(false);
-const testingFormServer = ref(false);
-const testingServerIds = ref<Set<string>>(new Set());
-const syncingServerIds = ref<Set<string>>(new Set());
-const syncingNodeIds = ref<Set<string>>(new Set());
+const saving = ref(false);
+const syncingUserIds = ref<Set<string>>(new Set());
+const syncingConfigIds = ref<Set<string>>(new Set());
 const error = ref('');
-const editingServerId = ref('');
-const editingNodeId = ref('');
-const serverDialogVisible = ref(false);
-const nodeDialogVisible = ref(false);
-const serverForm = reactive({ name: '', baseUrl: '', basePath: '', username: '', password: '', token: '', enabled: true, remark: '' });
-const nodeForm = reactive({ name: '', serverId: '', inboundId: undefined as number | undefined, protocol: 'vless', priceMonthly: 0, trafficLimitGb: 0, enabled: true, remark: '' });
+const editingId = ref('');
+const dialogVisible = ref(false);
+const form = reactive({
+  name: '',
+  serverId: '',
+  inboundId: undefined as number | undefined,
+  protocol: 'vless',
+  encryption: 'none',
+  priceMonthly: 0,
+  trafficLimitGb: 0,
+  enabled: true,
+  socksRelayEnabled: false,
+  socksNodeId: '',
+  remark: ''
+});
 
-const currentServer = computed(() => servers.value.find((server) => server.id === nodeForm.serverId));
+const enabledSocksNodes = computed(() => socksNodes.value.filter((item) => item.enabled));
 
 async function loadNodes() {
   loading.value = true;
   error.value = '';
   try {
-    const [serverList, nodeList] = await Promise.all([
+    const [serverList, nodeList, socksList] = await Promise.all([
       api<XuiServer[]>('/api/admin/xui-servers'),
-      api<ServiceNode[]>('/api/admin/service-nodes')
+      api<ServiceNode[]>('/api/admin/service-nodes'),
+      api<SocksNode[]>('/api/admin/socks-nodes')
     ]);
     servers.value = serverList;
     nodes.value = nodeList;
-    if (!nodeForm.serverId && serverList[0]) nodeForm.serverId = serverList[0].id;
+    socksNodes.value = socksList;
+    if (!form.serverId && serverList[0]) form.serverId = serverList[0].id;
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '加载节点配置失败';
+    error.value = err instanceof Error ? err.message : '加载服务节点失败';
   } finally {
     loading.value = false;
   }
 }
 
-async function saveServer() {
-  savingServer.value = true;
+async function saveNode() {
+  saving.value = true;
   error.value = '';
   try {
-    const path = editingServerId.value ? `/api/admin/xui-servers/${editingServerId.value}` : '/api/admin/xui-servers';
-    await api(path, { method: editingServerId.value ? 'PATCH' : 'POST', body: serverForm });
-    ElMessage.success(editingServerId.value ? '3x-ui 服务器已更新' : '3x-ui 服务器已新增');
-    serverDialogVisible.value = false;
-    resetServerForm();
-    await loadNodes();
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : '保存 3x-ui 服务器失败';
-  } finally {
-    savingServer.value = false;
-  }
-}
-
-async function testServerForm() {
-  testingFormServer.value = true;
-  error.value = '';
-  try {
-    const result = await api<{ connected: boolean; inbounds: unknown }>('/api/admin/xui/test', { method: 'POST', body: serverForm });
-    const inboundCount = Array.isArray(result.inbounds) ? result.inbounds.length : '-';
-    ElMessage.success(`连接成功，入站数量：${inboundCount}`);
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : '测试连接失败';
-  } finally {
-    testingFormServer.value = false;
-  }
-}
-
-async function testSavedServer(server: XuiServer) {
-  testingServerIds.value = new Set(testingServerIds.value).add(server.id);
-  error.value = '';
-  try {
-    const result = await api<{ inboundCount: number }>(`/api/admin/xui-servers/${server.id}/test`, { method: 'POST' });
-    ElMessage.success(`${server.name} 连接成功，入站数量：${result.inboundCount}`);
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : '测试已保存服务器失败';
-  } finally {
-    const next = new Set(testingServerIds.value);
-    next.delete(server.id);
-    testingServerIds.value = next;
-  }
-}
-
-async function syncServer(server: XuiServer) {
-  await ElMessageBox.confirm(`确认把服务器「${server.name}」下全部已绑定用户同步到远端 3x-ui？`, '同步确认', { type: 'warning' });
-  syncingServerIds.value = new Set(syncingServerIds.value).add(server.id);
-  error.value = '';
-  try {
-    const result = await api<SyncResult>(`/api/admin/xui-servers/${server.id}/sync`, { method: 'POST' });
-    ElMessage.success(`服务器同步完成：成功 ${result.success}，失败 ${result.failed}，总数 ${result.total}`);
-    await loadNodes();
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : '同步服务器失败';
-  } finally {
-    const next = new Set(syncingServerIds.value);
-    next.delete(server.id);
-    syncingServerIds.value = next;
-  }
-}
-
-async function saveServiceNode() {
-  savingNode.value = true;
-  error.value = '';
-  try {
-    const path = editingNodeId.value ? `/api/admin/service-nodes/${editingNodeId.value}` : '/api/admin/service-nodes';
-    await api(path, { method: editingNodeId.value ? 'PATCH' : 'POST', body: nodeForm });
-    ElMessage.success(editingNodeId.value ? '服务节点已更新' : '服务节点已新增');
-    nodeDialogVisible.value = false;
-    resetNodeForm();
+    const path = editingId.value ? `/api/admin/service-nodes/${editingId.value}` : '/api/admin/service-nodes';
+    await api(path, { method: editingId.value ? 'PATCH' : 'POST', body: form });
+    ElMessage.success(editingId.value ? '服务节点已更新' : '服务节点已添加');
+    dialogVisible.value = false;
+    resetForm();
     await loadNodes();
   } catch (err) {
     error.value = err instanceof Error ? err.message : '保存服务节点失败';
   } finally {
-    savingNode.value = false;
+    saving.value = false;
   }
 }
 
-async function syncServiceNode(node: ServiceNode) {
-  await ElMessageBox.confirm(`确认把「${node.name}」下已绑定用户同步到远端 3x-ui？`, '同步确认', { type: 'warning' });
-  syncingNodeIds.value = new Set(syncingNodeIds.value).add(node.id);
+async function syncUsers(node: ServiceNode) {
+  await ElMessageBox.confirm(`确认把“${node.name}”下已绑定用户同步到远端 3x-ui？`, '同步确认', { type: 'warning' });
+  syncingUserIds.value = new Set(syncingUserIds.value).add(node.id);
   error.value = '';
   try {
     const result = await api<SyncResult>(`/api/admin/service-nodes/${node.id}/sync`, { method: 'POST' });
-    ElMessage.success(`同步完成：成功 ${result.success}，失败 ${result.failed}，总数 ${result.total}`);
+    ElMessage.success(`用户同步完成：成功 ${result.success}，失败 ${result.failed}，总数 ${result.total}`);
     await loadNodes();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '同步服务节点失败';
+    error.value = err instanceof Error ? err.message : '同步用户失败';
   } finally {
-    const next = new Set(syncingNodeIds.value);
+    const next = new Set(syncingUserIds.value);
     next.delete(node.id);
-    syncingNodeIds.value = next;
+    syncingUserIds.value = next;
   }
 }
 
-function openServerDialog() {
-  resetServerForm();
-  serverDialogVisible.value = true;
+async function syncRemoteConfig(node: ServiceNode) {
+  await ElMessageBox.confirm(`确认把“${node.name}”的 Socks 中转配置写入远端 Xray？系统只会管理本项目标记的出站和路由。`, '同步配置确认', { type: 'warning' });
+  syncingConfigIds.value = new Set(syncingConfigIds.value).add(node.id);
+  error.value = '';
+  try {
+    const result = await api<{ action: string }>(`/api/admin/service-nodes/${node.id}/sync-config`, { method: 'POST' });
+    ElMessage.success(result.action === 'updated' ? '远端 Socks 中转配置已同步' : '远端 Socks 中转配置已清理');
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '同步远端配置失败';
+  } finally {
+    const next = new Set(syncingConfigIds.value);
+    next.delete(node.id);
+    syncingConfigIds.value = next;
+  }
 }
 
-function openNodeDialog() {
-  resetNodeForm();
-  nodeDialogVisible.value = true;
+function openDialog() {
+  resetForm();
+  dialogVisible.value = true;
 }
 
-function editServer(server: XuiServer) {
-  editingServerId.value = server.id;
-  Object.assign(serverForm, {
-    name: server.name,
-    baseUrl: server.baseUrl,
-    basePath: server.basePath || '',
-    username: server.username || '',
-    password: '',
-    token: '',
-    enabled: server.enabled,
-    remark: server.remark || ''
-  });
-  serverDialogVisible.value = true;
-}
-
-function editServiceNode(node: ServiceNode) {
-  editingNodeId.value = node.id;
-  Object.assign(nodeForm, {
+function editNode(node: ServiceNode) {
+  const config = node.config || {};
+  editingId.value = node.id;
+  Object.assign(form, {
     name: node.name,
     serverId: node.serverId,
     inboundId: node.inboundId ?? undefined,
-    protocol: node.protocol,
+    protocol: node.protocol || 'vless',
+    encryption: config.encryption || 'none',
     priceMonthly: Number(node.priceMonthly),
     trafficLimitGb: Number(node.trafficLimitGb),
     enabled: node.enabled,
+    socksRelayEnabled: Boolean(config.socksRelayEnabled),
+    socksNodeId: config.socksNodeId || '',
     remark: node.remark || ''
   });
-  nodeDialogVisible.value = true;
+  dialogVisible.value = true;
 }
 
-async function removeServer(server: XuiServer) {
-  await ElMessageBox.confirm(`确认删除服务器「${server.name}」？有关联服务节点时数据库会拒绝删除，请先处理节点。`, '删除确认', { type: 'warning' });
-  await api(`/api/admin/xui-servers/${server.id}`, { method: 'DELETE' });
-  ElMessage.success('服务器已删除');
-  if (editingServerId.value === server.id) resetServerForm();
-  await loadNodes();
-}
-
-async function removeServiceNode(node: ServiceNode) {
-  await ElMessageBox.confirm(`确认删除节点「${node.name}」？系统会先删除该节点下所有远端 3x-ui 客户端，再删除本地绑定记录和节点。`, '删除确认', { type: 'warning' });
+async function removeNode(node: ServiceNode) {
+  await ElMessageBox.confirm(`确认删除服务节点“${node.name}”？系统会先删除该节点下远端 3x-ui 客户端，并清理本项目写入的 Socks 路由配置。`, '删除确认', { type: 'warning' });
   await api(`/api/admin/service-nodes/${node.id}`, { method: 'DELETE' });
-  ElMessage.success('节点已删除');
-  if (editingNodeId.value === node.id) resetNodeForm();
+  ElMessage.success('服务节点已删除');
   await loadNodes();
 }
 
-function resetServerForm() {
-  editingServerId.value = '';
-  Object.assign(serverForm, { name: '', baseUrl: '', basePath: '', username: '', password: '', token: '', enabled: true, remark: '' });
+function resetForm() {
+  editingId.value = '';
+  Object.assign(form, {
+    name: '',
+    serverId: servers.value[0]?.id || '',
+    inboundId: undefined,
+    protocol: 'vless',
+    encryption: 'none',
+    priceMonthly: 0,
+    trafficLimitGb: 0,
+    enabled: true,
+    socksRelayEnabled: false,
+    socksNodeId: '',
+    remark: ''
+  });
 }
 
-function resetNodeForm() {
-  editingNodeId.value = '';
-  Object.assign(nodeForm, { name: '', serverId: servers.value[0]?.id || '', inboundId: undefined, protocol: 'vless', priceMonthly: 0, trafficLimitGb: 0, enabled: true, remark: '' });
+function socksLabel(id?: string | null) {
+  const node = socksNodes.value.find((item) => item.id === id);
+  return node ? `${node.name} (${node.host}:${node.port})` : '-';
 }
 
 onMounted(loadNodes);
 </script>
 
 <template>
-  <h1 class="page-title">节点管理</h1>
+  <h1 class="page-title">服务节点</h1>
   <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
 
   <div class="panel list-panel">
     <div class="panel-toolbar">
-      <strong>3x-ui 服务器</strong>
+      <strong>服务节点列表</strong>
       <div class="table-toolbar-actions">
-        <el-button type="primary" @click="openServerDialog">新增服务器</el-button>
+        <el-button type="primary" @click="openDialog">添加服务节点</el-button>
         <el-button :loading="loading" @click="loadNodes">刷新</el-button>
-      </div>
-    </div>
-    <el-table :data="servers" v-loading="loading" style="width: 100%">
-      <el-table-column prop="name" label="名称" min-width="140" />
-      <el-table-column prop="baseUrl" label="地址" min-width="220" />
-      <el-table-column prop="basePath" label="路径" width="120" />
-      <el-table-column label="凭据" width="150">
-        <template #default="{ row }: { row: XuiServer }">
-          <el-tag v-if="row.hasToken" size="small" type="success">Token</el-tag>
-          <el-tag v-else-if="row.hasPassword" size="small">账号密码</el-tag>
-          <el-tag v-else size="small" type="warning">未配置</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="90"><template #default="{ row }: { row: XuiServer }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-      <el-table-column label="操作" width="330" fixed="right">
-        <template #default="{ row }: { row: XuiServer }">
-          <el-button size="small" :loading="testingServerIds.has(row.id)" @click="testSavedServer(row)">测试</el-button>
-          <el-button size="small" :loading="syncingServerIds.has(row.id)" :disabled="!row.enabled" @click="syncServer(row)"><RefreshCw :size="15" />同步远端</el-button>
-          <el-button size="small" @click="editServer(row)">编辑</el-button>
-          <el-button size="small" type="danger" @click="removeServer(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-  </div>
-
-  <div class="panel list-panel">
-    <div class="panel-toolbar">
-      <strong>服务节点</strong>
-      <div class="table-toolbar-actions">
-        <el-button type="primary" @click="openNodeDialog">新增节点</el-button>
       </div>
     </div>
     <el-table :data="nodes" v-loading="loading" style="width: 100%">
       <el-table-column prop="name" label="名称" min-width="140" />
-      <el-table-column label="服务器" min-width="140"><template #default="{ row }: { row: ServiceNode }">{{ row.server?.name || '-' }}</template></el-table-column>
+      <el-table-column label="3x-ui 服务器" min-width="140">
+        <template #default="{ row }: { row: ServiceNode }">{{ row.server?.name || '-' }}</template>
+      </el-table-column>
       <el-table-column prop="inboundId" label="入站 ID" width="100" />
-      <el-table-column prop="protocol" label="协议" width="100" />
-      <el-table-column prop="priceMonthly" label="月价格" width="110" />
-      <el-table-column prop="trafficLimitGb" label="流量 GB" width="110" />
-      <el-table-column label="状态" width="90"><template #default="{ row }: { row: ServiceNode }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-      <el-table-column label="操作" width="260" fixed="right">
+      <el-table-column prop="protocol" label="节点类型" width="110" />
+      <el-table-column label="加密" width="190">
+        <template #default="{ row }: { row: ServiceNode }">{{ row.config?.encryption || 'none' }}</template>
+      </el-table-column>
+      <el-table-column prop="priceMonthly" label="月价格" width="100" />
+      <el-table-column prop="trafficLimitGb" label="流量 GB" width="100" />
+      <el-table-column label="Socks 中转" min-width="190">
         <template #default="{ row }: { row: ServiceNode }">
-          <el-button size="small" :loading="syncingNodeIds.has(row.id)" :disabled="!row.inboundId" @click="syncServiceNode(row)"><RefreshCw :size="15" />同步远端</el-button>
-          <el-button size="small" @click="editServiceNode(row)">编辑</el-button>
-          <el-button size="small" type="danger" @click="removeServiceNode(row)">删除</el-button>
+          <span v-if="row.config?.socksRelayEnabled">{{ socksLabel(row.config.socksNodeId) }}</span>
+          <span v-else class="muted-text">未启用</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="90">
+        <template #default="{ row }: { row: ServiceNode }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template>
+      </el-table-column>
+      <el-table-column label="操作" width="400" fixed="right">
+        <template #default="{ row }: { row: ServiceNode }">
+          <el-button size="small" :loading="syncingUserIds.has(row.id)" :disabled="!row.inboundId" @click="syncUsers(row)"><RefreshCw :size="15" />同步用户</el-button>
+          <el-button size="small" :loading="syncingConfigIds.has(row.id)" :disabled="!row.inboundId" @click="syncRemoteConfig(row)"><UploadCloud :size="15" />同步配置</el-button>
+          <el-button size="small" @click="editNode(row)">编辑</el-button>
+          <el-button size="small" type="danger" @click="removeNode(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
   </div>
 
-  <el-dialog v-model="serverDialogVisible" :title="editingServerId ? '编辑 3x-ui 服务器' : '新增 3x-ui 服务器'" width="760px" destroy-on-close>
-    <el-form :model="serverForm" label-width="96px" class="dialog-form-grid">
-      <el-form-item label="名称"><el-input v-model="serverForm.name" /></el-form-item>
-      <el-form-item label="面板地址"><el-input v-model="serverForm.baseUrl" placeholder="https://xui.example.com" /></el-form-item>
-      <el-form-item label="面板路径"><el-input v-model="serverForm.basePath" placeholder="例如 /panel，根路径可留空" /></el-form-item>
-      <el-form-item label="账号"><el-input v-model="serverForm.username" /></el-form-item>
-      <el-form-item label="密码"><el-input v-model="serverForm.password" type="password" show-password placeholder="编辑时留空表示不修改" /></el-form-item>
-      <el-form-item label="API Token"><el-input v-model="serverForm.token" type="password" show-password placeholder="编辑时留空表示不修改" /></el-form-item>
-      <el-form-item label="启用"><el-switch v-model="serverForm.enabled" /></el-form-item>
-      <el-form-item label="备注"><el-input v-model="serverForm.remark" /></el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button :loading="testingFormServer" :disabled="!serverForm.baseUrl" @click="testServerForm"><Wifi :size="15" />测试连接</el-button>
-      <el-button @click="serverDialogVisible = false">取消</el-button>
-      <el-button type="primary" :loading="savingServer" :disabled="!serverForm.name || !serverForm.baseUrl" @click="saveServer">保存</el-button>
-    </template>
-  </el-dialog>
-
-  <el-dialog v-model="nodeDialogVisible" :title="editingNodeId ? '编辑服务节点' : '新增服务节点'" width="720px" destroy-on-close>
-    <el-form :model="nodeForm" label-width="92px" class="dialog-form-grid">
-      <el-form-item label="节点名称"><el-input v-model="nodeForm.name" /></el-form-item>
-      <el-form-item label="服务器">
-        <el-select v-model="nodeForm.serverId" placeholder="选择 3x-ui 服务器" style="width: 100%">
+  <el-dialog v-model="dialogVisible" :title="editingId ? '编辑服务节点' : '添加服务节点'" width="820px" destroy-on-close>
+    <el-form :model="form" label-width="112px" class="dialog-form-grid">
+      <el-form-item label="节点名称"><el-input v-model="form.name" /></el-form-item>
+      <el-form-item label="3x-ui 服务器">
+        <el-select v-model="form.serverId" placeholder="选择服务器" style="width: 100%">
           <el-option v-for="server in servers" :key="server.id" :label="server.name" :value="server.id" />
         </el-select>
       </el-form-item>
-      <el-form-item label="入站 ID"><el-input-number v-model="nodeForm.inboundId" :min="0" style="width: 100%" /></el-form-item>
-      <el-form-item label="协议"><el-input v-model="nodeForm.protocol" placeholder="vless / vmess / trojan" /></el-form-item>
-      <el-form-item label="月价格"><el-input-number v-model="nodeForm.priceMonthly" :min="0" :precision="2" style="width: 100%" /></el-form-item>
-      <el-form-item label="流量 GB"><el-input-number v-model="nodeForm.trafficLimitGb" :min="0" :precision="2" style="width: 100%" /></el-form-item>
-      <el-form-item label="启用"><el-switch v-model="nodeForm.enabled" /></el-form-item>
-      <el-form-item label="备注"><el-input v-model="nodeForm.remark" /></el-form-item>
-      <el-form-item v-if="currentServer" label="当前服务器"><span class="muted-text">{{ currentServer.name }}</span></el-form-item>
+      <el-form-item label="入站 ID"><el-input-number v-model="form.inboundId" :min="0" style="width: 100%" /></el-form-item>
+      <el-form-item label="节点类型">
+        <el-select v-model="form.protocol" style="width: 100%">
+          <el-option v-for="item in protocolOptions" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="加密类型">
+        <el-select v-model="form.encryption" style="width: 100%">
+          <el-option v-for="item in encryptionOptions" :key="item.value" :label="item.label" :value="item.value" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="月价格"><el-input-number v-model="form.priceMonthly" :min="0" :precision="2" style="width: 100%" /></el-form-item>
+      <el-form-item label="流量 GB"><el-input-number v-model="form.trafficLimitGb" :min="0" :precision="2" style="width: 100%" /></el-form-item>
+      <el-form-item label="启用节点"><el-switch v-model="form.enabled" /></el-form-item>
+      <el-form-item label="启用 Socks"><el-switch v-model="form.socksRelayEnabled" /></el-form-item>
+      <el-form-item label="Socks 节点">
+        <el-select v-model="form.socksNodeId" :disabled="!form.socksRelayEnabled" placeholder="选择 Socks 节点" style="width: 100%">
+          <el-option v-for="node in enabledSocksNodes" :key="node.id" :label="`${node.name} (${node.host}:${node.port})`" :value="node.id" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="备注"><el-input v-model="form.remark" /></el-form-item>
     </el-form>
     <template #footer>
-      <el-button @click="nodeDialogVisible = false">取消</el-button>
-      <el-button type="primary" :loading="savingNode" :disabled="!nodeForm.name || !nodeForm.serverId" @click="saveServiceNode">保存</el-button>
+      <el-button @click="dialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="saving" :disabled="!form.name || !form.serverId || (form.socksRelayEnabled && !form.socksNodeId)" @click="saveNode">保存</el-button>
     </template>
   </el-dialog>
 </template>

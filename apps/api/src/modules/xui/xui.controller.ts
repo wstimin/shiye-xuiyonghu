@@ -30,6 +30,11 @@ export class XuiController {
   @Roles('admin')
   syncServiceNode(@Param('id') id: string) { return this.xui.syncServiceNode(id); }
 
+  @Post('admin/service-nodes/:id/sync-config')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  syncServiceNodeConfig(@Param('id') id: string) { return this.xui.syncServiceNodeRemoteConfig(id); }
+
   @Post('admin/customers/:id/nodes/:nodeId/sync')
   @UseGuards(AuthGuard)
   @Roles('admin')
