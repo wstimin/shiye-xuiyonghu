@@ -126,7 +126,7 @@ clone_repo() {
 load_existing_env_defaults() {
   normalize_app_dir
   env_file="${APP_DIR}/.env"
-  [ -f "${env_file}" ] || return
+  [ -f "${env_file}" ] || return 0
 
   existing_database_url="$(grep -E '^DATABASE_URL=' "${env_file}" | tail -n 1 | cut -d= -f2- || true)"
   if [ -z "${DATABASE_URL:-}" ] && [ -n "${existing_database_url}" ]; then
