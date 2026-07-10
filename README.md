@@ -26,6 +26,18 @@
 
 ## 一键部署
 
+服务器上直接执行，默认安装到 `/opt/shiye`，服务名 `shiye-api`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh | sudo bash
+```
+
+带域名和 HTTPS 直接部署：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh | sudo env DOMAIN=panel.example.com ENABLE_NGINX=yes ENABLE_HTTPS=yes CERTBOT_EMAIL=admin@example.com bash
+```
+
 服务器项目根目录执行：
 
 ```bash
@@ -42,6 +54,18 @@ sudo DOMAIN=panel.example.com ENABLE_NGINX=yes ENABLE_HTTPS=yes bash install.sh
 
 ```bash
 sudo REPO_URL=https://github.com/wstimin/shiye-3xuigl-L3.git DOMAIN=panel.example.com bash install.sh
+```
+
+一键卸载，默认保留数据库：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/uninstall.sh | sudo bash
+```
+
+彻底卸载并删除默认数据库：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/uninstall.sh | sudo env DELETE_DATABASE=yes bash
 ```
 
 详细说明见 [DEPLOY.md](./DEPLOY.md)。

@@ -14,6 +14,18 @@
 
 ## 2. 一键脚本部署
 
+服务器上直接执行，默认安装到 `/opt/shiye`，服务名 `shiye-api`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh | sudo bash
+```
+
+带域名和 HTTPS 直接部署：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh | sudo env DOMAIN=panel.example.com ENABLE_NGINX=yes ENABLE_HTTPS=yes CERTBOT_EMAIL=admin@example.com bash
+```
+
 把仓库上传到服务器后，在项目根目录执行：
 
 ```bash
@@ -208,3 +220,19 @@ npm run deploy:check
 - 新增服务节点，确认 inbound ID
 - 创建测试用户并绑定节点
 - 点击同步到 3x-ui，验证节点同步链路
+
+## 10. 卸载入口
+
+默认卸载程序、服务和 Nginx 配置，保留数据库：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/uninstall.sh | sudo bash
+```
+
+彻底卸载并删除默认数据库：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/uninstall.sh | sudo env DELETE_DATABASE=yes bash
+```
+
+删除数据库对应的原始 MySQL 命令见 `UNINSTALL.md`。

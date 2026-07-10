@@ -381,7 +381,7 @@ configure_optional_nginx() {
     INSTALL_NGINX_SELECTED=1
   elif is_no "${ENABLE_NGINX}"; then
     INSTALL_NGINX_SELECTED=0
-  elif ask_yes_no "Install Nginx reverse proxy and serve web pages?" "yes"; then
+  elif ask_yes_no "Install Nginx reverse proxy and serve web pages?" "$([ -n "${DOMAIN}" ] && echo yes || echo no)"; then
     INSTALL_NGINX_SELECTED=1
   fi
 
