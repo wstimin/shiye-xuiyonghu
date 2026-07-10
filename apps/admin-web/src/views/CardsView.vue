@@ -5,17 +5,15 @@ import { Copy } from 'lucide-vue-next';
 import { api } from '../api';
 
 type CardTemplate = { id: string; name: string; amount: string; quantity: number; prefix?: string | null; enabled: boolean; remark?: string | null };
-type CardBatch = { id: string; name: string; amount: string; quantity: number; prefix?: string | null; templateId?: string | null; createdAt: string; template?: CardTemplate | null; _count?: { cards: number } };
+type BatchCard = { id: string; code: string | null; codePreview: string; amount: string; status: string; usedAt?: string | null; createdAt: string; usedBy?: { name: string; loginUsername: string } | null };
+type CardBatch = { id: string; name: string; amount: string; quantity: number; prefix?: string | null; templateId?: string | null; createdAt: string; template?: CardTemplate | null; cards?: BatchCard[]; _count?: { cards: number } };
 type Card = { id: string; codePreview: string; amount: string; status: string; usedAt?: string | null; batch?: { id: string; name: string } | null; usedBy?: { name: string; loginUsername: string } | null };
 type CardResult = { items: Card[]; batches: CardBatch[]; templates: CardTemplate[] };
-type GeneratedBatch = { id: string; groupId: string; groupName: string; name: string; amount: string; quantity: number; createdAt: string; codes: string[] };
-type GeneratedBatchGroup = { id: string; name: string; batches: GeneratedBatch[] };
 
 const loading = ref(false);
 const generating = ref(false);
 const savingTemplate = ref(false);
 const error = ref('');
-const generatedBatches = ref<GeneratedBatch[]>([]);
 const cards = ref<Card[]>([]);
 const batches = ref<CardBatch[]>([]);
 const templates = ref<CardTemplate[]>([]);
@@ -27,14 +25,6 @@ const templateForm = reactive({ name: '', amount: 10, quantity: 10, prefix: '', 
 
 const enabledTemplates = computed(() => templates.value.filter((template) => template.enabled));
 const selectedTemplate = computed(() => templates.value.find((item) => item.id === generateForm.templateId));
-const generatedBatchGroups = computed<GeneratedBatchGroup[]>(() => {
-  const groups = new Map<string, GeneratedBatchGroup>();
-  for (const batch of generatedBatches.value) {
-    if (!groups.has(batch.groupId)) groups.set(batch.groupId, { id: batch.groupId, name: batch.groupName, batches: [] });
-    groups.get(batch.groupId)?.batches.push(batch);
-  }
-  return Array.from(groups.values());
-});
 
 async function loadCards() {
   loading.value = true;
@@ -77,16 +67,6 @@ async function generateCards() {
       ? { templateId: template.id, name: generateForm.name || defaultBatchName(template.name), amount: Number(template.amount), quantity: template.quantity, prefix: template.prefix || '' }
       : { ...generateForm, templateId: undefined };
     const result = await api<{ batchId: string; generated: number; codes: string[] }>('/api/admin/cards/generate', { method: 'POST', body });
-    generatedBatches.value.unshift({
-      id: result.batchId,
-      groupId: template?.id || 'custom',
-      groupName: template?.name || '自定义卡密',
-      name: body.name,
-      amount: String(body.amount),
-      quantity: result.generated,
-      createdAt: new Date().toISOString(),
-      codes: result.codes
-    });
     ElMessage.success(`已生成 ${result.codes.length} 张卡密`);
     generateDialogVisible.value = false;
     resetGenerateForm(template?.id || '');
@@ -195,6 +175,14 @@ function clearTemplateSelection() {
   resetGenerateForm();
 }
 
+function fullCodes(batch: CardBatch) {
+  return (batch.cards || []).map((card) => card.code).filter((code): code is string => Boolean(code));
+}
+
+function hasFullCodes(batch: CardBatch) {
+  return fullCodes(batch).length > 0;
+}
+
 function defaultBatchName(templateName = '卡密批次') {
   const now = new Date();
   const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
@@ -217,35 +205,6 @@ onMounted(loadCards);
 <template>
   <h1 class="page-title">卡密管理</h1>
   <el-alert v-if="error" class="page-alert" :title="error" type="error" show-icon :closable="false" />
-
-  <div v-if="generatedBatchGroups.length" class="panel list-panel">
-    <div class="panel-toolbar"><strong>新生成卡密</strong></div>
-    <div class="generated-template-grid">
-      <section v-for="group in generatedBatchGroups" :key="group.id" class="generated-template-card">
-        <div class="generated-template-head">
-          <strong>{{ group.name }}</strong>
-          <span>{{ group.batches.length }} 个批次</span>
-        </div>
-        <div class="generated-batch-stack">
-          <div v-for="batch in group.batches" :key="batch.id" class="generated-batch-card">
-            <div class="generated-batch-head">
-              <div>
-                <strong>{{ batch.name }}</strong>
-                <span>{{ batch.amount }} 元 / {{ batch.quantity }} 张 / {{ formatDate(batch.createdAt) }}</span>
-              </div>
-              <el-button size="small" type="primary" plain @click="copyCodes(batch.codes)"><Copy :size="15" />复制整批</el-button>
-            </div>
-            <div class="generated-code-list">
-              <div v-for="code in batch.codes" :key="code" class="generated-code-row">
-                <code>{{ code }}</code>
-                <el-button size="small" text @click="copyCodes([code], '已复制卡密')"><Copy :size="14" />复制</el-button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-    </div>
-  </div>
 
   <div class="panel list-panel">
     <div class="panel-toolbar">
@@ -275,7 +234,7 @@ onMounted(loadCards);
 
   <div class="panel list-panel">
     <div class="panel-toolbar"><strong>批次列表</strong></div>
-    <el-table :data="batches" v-loading="loading" style="width: 100%">
+    <el-table :data="batches" v-loading="loading" style="width: 100%" row-key="id">
       <el-table-column prop="name" label="批次名称" min-width="170" />
       <el-table-column label="来源模板" min-width="130"><template #default="{ row }: { row: CardBatch }">{{ row.template?.name || '-' }}</template></el-table-column>
       <el-table-column prop="amount" label="金额" width="110" />
@@ -285,6 +244,30 @@ onMounted(loadCards);
       <el-table-column label="创建时间" min-width="180"><template #default="{ row }: { row: CardBatch }">{{ formatDate(row.createdAt) }}</template></el-table-column>
       <el-table-column label="操作" width="90" fixed="right"><template #default="{ row }: { row: CardBatch }"><el-button size="small" type="danger" @click="removeBatch(row)">删除</el-button></template></el-table-column>
     </el-table>
+  </div>
+
+  <div class="panel list-panel">
+    <div class="panel-toolbar"><strong>批次卡密</strong></div>
+    <div v-if="batches.length" class="generated-batch-stack batch-code-stack">
+      <section v-for="batch in batches" :key="batch.id" class="generated-batch-card">
+        <div class="generated-batch-head">
+          <div>
+            <strong>{{ batch.name }}</strong>
+            <span>{{ batch.amount }} 元 / {{ batch._count?.cards ?? batch.quantity }} 张 / {{ formatDate(batch.createdAt) }}</span>
+          </div>
+          <el-button size="small" type="primary" plain :disabled="!hasFullCodes(batch)" @click="copyCodes(fullCodes(batch))"><Copy :size="15" />复制整批</el-button>
+        </div>
+        <div v-if="hasFullCodes(batch)" class="generated-code-list">
+          <div v-for="card in batch.cards || []" :key="card.id" class="generated-code-row">
+            <code>{{ card.code || card.codePreview }}</code>
+            <el-tag size="small" :type="card.status === 'unused' ? 'success' : card.status === 'used' ? 'warning' : 'info'">{{ statusLabel(card.status) }}</el-tag>
+            <el-button size="small" text :disabled="!card.code" @click="copyCodes(card.code ? [card.code] : [], '已复制卡密')"><Copy :size="14" />复制</el-button>
+          </div>
+        </div>
+        <div v-else class="batch-empty-detail">本批次没有可复制的完整卡密。旧批次生成时未保存完整卡密，只能在下方卡密列表查看预览码。</div>
+      </section>
+    </div>
+    <div v-else class="empty-panel">暂无卡密批次</div>
   </div>
 
   <div class="panel list-panel">

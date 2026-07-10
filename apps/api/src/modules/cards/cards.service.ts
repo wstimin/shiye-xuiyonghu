@@ -4,27 +4,64 @@ import type { z } from 'zod';
 import crypto from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { EncryptionService } from '../security/encryption.service.js';
 
 @Injectable()
 export class CardsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly encryption: EncryptionService) {}
 
   async list() {
     const [items, batches, templates, total] = await this.prisma.$transaction([
       this.prisma.card.findMany({
         orderBy: { createdAt: 'desc' },
         take: 100,
-        include: {
+        select: {
+          id: true,
+          codePreview: true,
+          amount: true,
+          status: true,
+          usedAt: true,
+          createdAt: true,
           batch: { select: { id: true, name: true, templateId: true } },
           usedBy: { select: { id: true, name: true, loginUsername: true } }
         }
       }),
-      this.prisma.cardBatch.findMany({ orderBy: { createdAt: 'desc' }, take: 100, include: { template: true, _count: { select: { cards: true } } } }),
+      this.prisma.cardBatch.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        include: {
+          template: true,
+          _count: { select: { cards: true } },
+          cards: {
+            orderBy: { createdAt: 'asc' },
+            select: { id: true, codeEnc: true, codePreview: true, amount: true, status: true, usedAt: true, createdAt: true, usedBy: { select: { id: true, name: true, loginUsername: true } } }
+          }
+        }
+      }),
       this.prisma.cardTemplate.findMany({ orderBy: { createdAt: 'desc' } }),
       this.prisma.card.count()
     ]);
 
-    return { items, batches, templates, page: 1, pageSize: 100, total };
+    return {
+      items,
+      batches: batches.map((batch) => ({
+        ...batch,
+        cards: batch.cards.map((card) => ({
+          id: card.id,
+          code: this.decryptCardCode(card.codeEnc),
+          codePreview: card.codePreview,
+          amount: card.amount,
+          status: card.status,
+          usedAt: card.usedAt,
+          createdAt: card.createdAt,
+          usedBy: card.usedBy
+        }))
+      })),
+      templates,
+      page: 1,
+      pageSize: 100,
+      total
+    };
   }
 
   templates() {
@@ -85,6 +122,7 @@ export class CardsService {
           createMany: {
             data: codes.map((code) => ({
               codeHash: hashCardCode(code),
+              codeEnc: this.encryption.encrypt(code),
               codePreview: previewCode(code),
               amount
             }))
@@ -173,6 +211,15 @@ export class CardsService {
   private async ensureTemplate(id: string) {
     const exists = await this.prisma.cardTemplate.findUnique({ where: { id }, select: { id: true } });
     if (!exists) throw new NotFoundException('Card template not found');
+  }
+
+  private decryptCardCode(value: string | null) {
+    if (!value) return null;
+    try {
+      return this.encryption.decrypt(value);
+    } catch {
+      return null;
+    }
   }
 }
 

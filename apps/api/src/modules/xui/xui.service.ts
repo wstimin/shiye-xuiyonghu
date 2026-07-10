@@ -46,6 +46,7 @@ type CreateServiceInboundInput = {
 };
 
 const SHIYE_ROUTE_MARK = 'shiye-service-node';
+const SHARE_LINK_PROTOCOLS = new Set(['vless', 'vmess', 'trojan', 'shadowsocks', 'hysteria']);
 
 @Injectable()
 export class XuiService {
@@ -247,26 +248,85 @@ export class XuiService {
   }
 
   async syncServer(serverId: string) {
-    const server = await this.prisma.xuiServer.findUnique({ where: { id: serverId }, select: { id: true, name: true } });
+    const server = await this.prisma.xuiServer.findUnique({ where: { id: serverId } });
     if (!server) throw new NotFoundException('3x-ui 服务器不存在');
+    if (!server.enabled) throw new BadRequestException('3x-ui 服务器已停用');
 
-    const customerNodes = await this.prisma.customerNode.findMany({
-      where: { serviceNode: { serverId } },
-      select: { id: true, customerId: true, xuiEmail: true, serviceNode: { select: { id: true, name: true } } }
-    });
+    const client = await this.createAuthenticatedClient(server);
+    const payload = await client.listInbounds();
+    this.assertXuiSuccess(payload);
+    const inbounds = this.xuiArray(payload);
 
-    const results: Array<{ customerNodeId: string; customerId: string; serviceNodeId: string; serviceNodeName: string; xuiEmail: string; synced: boolean; message?: string }> = [];
-    for (const node of customerNodes) {
+    const results: Array<{ inboundId: number; name: string; action: 'created' | 'updated' | 'skipped'; serviceNodeId?: string; message?: string }> = [];
+    for (const rawInbound of inbounds) {
+      const inboundId = this.inboundIdOf(rawInbound);
       try {
-        await this.syncCustomerNode(node.customerId, node.id);
-        results.push({ customerNodeId: node.id, customerId: node.customerId, serviceNodeId: node.serviceNode.id, serviceNodeName: node.serviceNode.name, xuiEmail: node.xuiEmail, synced: true });
+        if (!inboundId) {
+          results.push({ inboundId: 0, name: 'unknown', action: 'skipped', message: '远端入站缺少有效 ID' });
+          continue;
+        }
+
+        const inbound = this.xuiObject(rawInbound);
+        const streamSettings = this.xuiObject(inbound.streamSettings);
+        const name = this.remoteInboundName(inbound, inboundId);
+        const protocol = String(inbound.protocol || 'vless').trim() || 'vless';
+        if (!SHARE_LINK_PROTOCOLS.has(protocol)) {
+          results.push({ inboundId, name: this.remoteInboundName(inbound, inboundId), action: 'skipped', message: `${protocol} 不会生成用户端节点链接` });
+          continue;
+        }
+        const port = this.positiveInteger(inbound.port);
+        const enabled = this.booleanValue(inbound.enable, true);
+        const existing = await this.prisma.serviceNode.findFirst({ where: { serverId, inboundId } });
+        const previousConfig = this.xuiObject(existing?.config);
+        const config = {
+          ...previousConfig,
+          remoteMode: 'bind',
+          remoteManaged: false,
+          remoteInboundTag: String(inbound.tag || previousConfig.remoteInboundTag || ''),
+          remoteInboundRemark: String(inbound.remark || previousConfig.remoteInboundRemark || ''),
+          remoteInboundPort: port || previousConfig.remoteInboundPort || undefined,
+          encryption: String(streamSettings.security || previousConfig.encryption || 'none'),
+          importedFromRemote: true
+        };
+
+        if (existing) {
+          const updated = await this.prisma.serviceNode.update({
+            where: { id: existing.id },
+            data: {
+              name,
+              protocol,
+              enabled,
+              config: this.toJsonValue(config)
+            }
+          });
+          results.push({ inboundId, name, action: 'updated', serviceNodeId: updated.id });
+          continue;
+        }
+
+        const created = await this.prisma.serviceNode.create({
+          data: {
+            serverId,
+            name,
+            inboundId,
+            protocol,
+            priceMonthly: new Prisma.Decimal(0),
+            trafficLimitGb: new Prisma.Decimal(0),
+            enabled,
+            config: this.toJsonValue(config),
+            remark: String(inbound.remark || '').trim() || null
+          }
+        });
+        results.push({ inboundId, name, action: 'created', serviceNodeId: created.id });
       } catch (error) {
-        results.push({ customerNodeId: node.id, customerId: node.customerId, serviceNodeId: node.serviceNode.id, serviceNodeName: node.serviceNode.name, xuiEmail: node.xuiEmail, synced: false, message: this.errorMessage(error) });
+        results.push({ inboundId, name: inboundId ? `Inbound ${inboundId}` : 'unknown', action: 'skipped', message: this.errorMessage(error) });
       }
     }
 
-    const success = results.filter((item) => item.synced).length;
-    return { serverId, serverName: server.name, total: results.length, success, failed: results.length - success, results };
+    const created = results.filter((item) => item.action === 'created').length;
+    const updated = results.filter((item) => item.action === 'updated').length;
+    const skipped = results.filter((item) => item.action === 'skipped').length;
+    await this.writeSyncLog(serverId, 'server-inbounds-import', skipped ? 'partial' : 'success', `Imported remote inbounds from ${server.name}`, { created, updated, skipped, results });
+    return { serverId, serverName: server.name, total: results.length, created, updated, skipped, results };
   }
 
   async deleteCustomerNode(customerId: string, customerNodeId: string, keepTraffic = false) {
@@ -376,7 +436,7 @@ export class XuiService {
         ? await client.updateClient(customerNode.xuiEmail, { ...xuiClient, inboundIds: [inboundId] })
         : await client.addClient({ client: xuiClient, inboundIds: [inboundId] });
       this.assertXuiSuccess(payload);
-      const links = await this.linksForClient(client, customerNode.xuiEmail).catch(() => [] as string[]);
+      const links = await this.linksForClient(client, customerNode.xuiEmail, subId).catch(() => [] as string[]);
       const syncedAt = new Date();
       const updatedNode = await this.prisma.customerNode.update({
         where: { id: customerNode.id },
@@ -418,7 +478,8 @@ export class XuiService {
     const savedLinks = Array.isArray(config.links) ? config.links.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
     if (savedLinks.length) return savedLinks;
     const client = await this.createAuthenticatedClient(customerNode.serviceNode.server);
-    return this.linksForClient(client, customerNode.xuiEmail);
+    const subId = typeof config.subId === 'string' ? config.subId : undefined;
+    return this.linksForClient(client, customerNode.xuiEmail, subId);
   }
 
   private async createAuthenticatedClient(config: XuiServerConfig) {
@@ -529,7 +590,7 @@ export class XuiService {
           cipherSuites: '',
           rejectUnknownSni: false,
           certificates: [{ certificateFile: certFiles.certFile, keyFile: certFiles.keyFile, ocspStapling: 3600 }],
-          alpn: ['http/1.1']
+          alpn: ['h2', 'http/1.1']
         }
       };
     }
@@ -548,6 +609,7 @@ export class XuiService {
           minClient: '',
           maxClient: '',
           maxTimediff: 0,
+          alpn: ['h2', 'http/1.1'],
           shortIds: [this.randomShortId()],
           settings: { publicKey: keys.publicKey, fingerprint: 'chrome', serverName: 'www.microsoft.com', spiderX: '/' }
         }
@@ -576,15 +638,25 @@ export class XuiService {
     return { privateKey, publicKey };
   }
 
-  private async linksForClient(client: XuiClient, email: string) {
+  private async linksForClient(client: XuiClient, email: string, subId?: string) {
     const payload = await client.clientLinks(email);
     this.assertXuiSuccess(payload);
-    const links = this.xuiArray(payload).filter((item): item is string => typeof item === 'string' && item.length > 0);
+    const links = this.extractLinks(payload);
+    if (links.length) return links;
+    if (!subId) return [];
+
+    const subPayload = await client.subLinks(subId);
+    this.assertXuiSuccess(subPayload);
+    return this.extractLinks(subPayload);
+  }
+
+  private extractLinks(payload: unknown) {
+    const links = this.xuiArray(payload).filter((item): item is string => this.isShareLink(item));
     if (links.length) return links;
     const object = this.xuiObject(payload);
     for (const key of ['links', 'urls', 'obj', 'data']) {
       const value = this.parseMaybeJson(object[key]);
-      if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+      if (Array.isArray(value)) return value.filter((item): item is string => this.isShareLink(item));
     }
     return [];
   }
@@ -697,9 +769,33 @@ export class XuiService {
     return Number.isInteger(value) && value > 0 ? value : 0;
   }
 
+  private remoteInboundName(inbound: Record<string, unknown>, inboundId: number) {
+    return String(inbound.remark || inbound.tag || `Inbound ${inboundId}`).trim() || `Inbound ${inboundId}`;
+  }
+
+  private positiveInteger(value: unknown) {
+    const number = Number(value);
+    return Number.isInteger(number) && number > 0 ? number : undefined;
+  }
+
+  private booleanValue(value: unknown, fallback: boolean) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+      if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+    }
+    return fallback;
+  }
+
   private clientEmailOf(item: unknown) {
     const object = this.xuiObject(item);
     return String(object.email || object.clientEmail || object.name || '').trim();
+  }
+
+  private isShareLink(item: unknown): item is string {
+    return typeof item === 'string' && /^(vless|vmess|trojan|ss|shadowsocks|hysteria|hy2):\/\//i.test(item.trim());
   }
 
   private gbToBytes(value: Prisma.Decimal | number | string | null) {

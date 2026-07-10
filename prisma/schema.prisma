@@ -204,6 +204,7 @@ model Card {
   id          String     @id @default(cuid())
   batchId     String?
   codeHash    String     @unique @db.VarChar(255)
+  codeEnc     String?    @db.Text
   codePreview String     @db.VarChar(32)
   amount      Decimal    @db.Decimal(12, 2)
   status      CardStatus @default(unused)

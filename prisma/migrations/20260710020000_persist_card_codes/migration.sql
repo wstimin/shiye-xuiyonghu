@@ -1,0 +1,1 @@
+ALTER TABLE `cards` ADD COLUMN `codeEnc` TEXT NULL;

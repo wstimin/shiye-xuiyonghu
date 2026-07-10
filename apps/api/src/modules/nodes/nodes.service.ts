@@ -17,6 +17,8 @@ type ServiceNodeConfig = {
   remoteInboundPort?: number;
 };
 
+const SHARE_LINK_PROTOCOLS = new Set(['vless', 'vmess', 'trojan', 'shadowsocks', 'hysteria']);
+
 @Injectable()
 export class NodesService {
   constructor(private readonly prisma: PrismaService, private readonly encryption: EncryptionService, private readonly xui: XuiService) {}
@@ -74,6 +76,7 @@ export class NodesService {
   }
 
   async createServiceNode(input: z.infer<typeof serviceNodeUpsertSchema>) {
+    this.assertShareLinkProtocol(input.protocol);
     await this.ensureServer(input.serverId);
     const remoteMode = input.remoteMode || 'create';
     let inboundId = input.inboundId || null;
@@ -128,6 +131,7 @@ export class NodesService {
 
   async updateServiceNode(id: string, input: Partial<z.infer<typeof serviceNodeUpsertSchema>>) {
     const current = await this.ensureServiceNode(id);
+    if (input.protocol) this.assertShareLinkProtocol(input.protocol);
     if (input.serverId) await this.ensureServer(input.serverId);
     const nextServerId = input.serverId || current.serverId;
     const previousConfig = jsonObject(current.config) as ServiceNodeConfig;
@@ -352,6 +356,12 @@ export class NodesService {
   private async ensureSocksNode(id: string) {
     const exists = await this.prisma.socksNode.findUnique({ where: { id }, select: { id: true } });
     if (!exists) throw new NotFoundException('Socks node not found');
+  }
+
+  private assertShareLinkProtocol(protocol: string) {
+    if (!SHARE_LINK_PROTOCOLS.has(protocol)) {
+      throw new BadRequestException('服务节点只支持可生成用户链接的协议：VLESS、VMess、Trojan、Shadowsocks、Hysteria。Socks 请在 Socks 中转节点中配置。');
+    }
   }
 
   private async serviceNodeConfig(input: Partial<z.infer<typeof serviceNodeUpsertSchema>>, current?: Prisma.JsonValue | null, remotePatch: Partial<ServiceNodeConfig> = {}): Promise<ServiceNodeConfig> {

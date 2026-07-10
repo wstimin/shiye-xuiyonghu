@@ -134,6 +134,10 @@ export class XuiClient {
     return this.request(`/panel/api/clients/links/${encodeURIComponent(email)}`);
   }
 
+  subLinks(subId: string) {
+    return this.request(`/panel/api/clients/subLinks/${encodeURIComponent(subId)}`);
+  }
+
   getXrayConfig() {
     return this.request('/panel/api/xray/', { method: 'POST' });
   }

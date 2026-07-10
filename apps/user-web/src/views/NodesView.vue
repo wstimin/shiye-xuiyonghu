@@ -52,8 +52,38 @@ async function renewNode(nodeId: string) {
 }
 
 async function copyText(text: string) {
-  await navigator.clipboard.writeText(text);
-  message.value = '已复制';
+  error.value = '';
+  message.value = '';
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      fallbackCopyText(text);
+    }
+    message.value = '已复制';
+  } catch (err) {
+    try {
+      fallbackCopyText(text);
+      message.value = '已复制';
+    } catch {
+      error.value = err instanceof Error ? err.message : '复制失败，请使用 HTTPS 访问后重试';
+    }
+  }
+}
+
+function fallbackCopyText(text: string) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+  if (!copied) throw new Error('复制失败，请手动复制或使用 HTTPS 访问');
 }
 
 async function showQrCode(node: UserNode, link: string, index: number) {

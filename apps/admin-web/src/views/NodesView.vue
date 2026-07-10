@@ -34,13 +34,7 @@ const protocolOptions = [
   { label: 'VMess', value: 'vmess' },
   { label: 'Trojan', value: 'trojan' },
   { label: 'Shadowsocks', value: 'shadowsocks' },
-  { label: 'Hysteria', value: 'hysteria' },
-  { label: 'Socks', value: 'socks' },
-  { label: 'HTTP', value: 'http' },
-  { label: 'Mixed', value: 'mixed' },
-  { label: 'WireGuard', value: 'wireguard' },
-  { label: 'Dokodemo', value: 'dokodemo' },
-  { label: 'Tunnel', value: 'tunnel' }
+  { label: 'Hysteria', value: 'hysteria' }
 ];
 const encryptionOptions = [
   { label: 'none', value: 'none' },

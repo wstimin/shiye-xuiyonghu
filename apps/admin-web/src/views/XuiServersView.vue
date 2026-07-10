@@ -16,7 +16,7 @@ type XuiServer = {
   hasToken?: boolean;
 };
 
-type SyncResult = { total: number; success: number; failed: number };
+type SyncResult = { total: number; created: number; updated: number; skipped: number };
 
 const servers = ref<XuiServer[]>([]);
 const loading = ref(false);
@@ -88,14 +88,14 @@ async function testSaved(server: XuiServer) {
 }
 
 async function syncServer(server: XuiServer) {
-  await ElMessageBox.confirm(`确认把服务器“${server.name}”下全部已绑定用户同步到远端 3x-ui？`, '同步确认', { type: 'warning' });
+  await ElMessageBox.confirm(`确认从服务器“${server.name}”读取远端入站，并同步为本地服务节点？此操作不会同步远端用户。`, '同步远端节点', { type: 'warning' });
   syncingIds.value = new Set(syncingIds.value).add(server.id);
   error.value = '';
   try {
     const result = await api<SyncResult>(`/api/admin/xui-servers/${server.id}/sync`, { method: 'POST' });
-    ElMessage.success(`服务器同步完成：成功 ${result.success}，失败 ${result.failed}，总数 ${result.total}`);
+    ElMessage.success(`远端节点同步完成：新增 ${result.created}，更新 ${result.updated}，跳过 ${result.skipped}，总数 ${result.total}`);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '同步服务器失败';
+    error.value = err instanceof Error ? err.message : '同步远端节点失败';
   } finally {
     const next = new Set(syncingIds.value);
     next.delete(server.id);
@@ -178,7 +178,7 @@ onMounted(loadServers);
       <el-table-column label="操作" width="340" fixed="right">
         <template #default="{ row }: { row: XuiServer }">
           <el-button size="small" :loading="testingIds.has(row.id)" @click="testSaved(row)"><Wifi :size="15" />测试</el-button>
-          <el-button size="small" :loading="syncingIds.has(row.id)" :disabled="!row.enabled" @click="syncServer(row)"><RefreshCw :size="15" />同步用户</el-button>
+          <el-button size="small" :loading="syncingIds.has(row.id)" :disabled="!row.enabled" @click="syncServer(row)"><RefreshCw :size="15" />同步节点</el-button>
           <el-button size="small" @click="editServer(row)">编辑</el-button>
           <el-button size="small" type="danger" @click="removeServer(row)">删除</el-button>
         </template>
