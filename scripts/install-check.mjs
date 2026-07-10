@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createConnection } from 'mysql2/promise';
 
 const env = loadEnv();
@@ -12,6 +13,8 @@ requireSecret('CARD_HASH_SECRET', 32);
 
 if (!env.PUBLIC_WEB_URL) warnings.push('PUBLIC_WEB_URL is not set; payment callback URLs may need manual configuration.');
 if ((env.DEFAULT_ADMIN_PASSWORD || '').toLowerCase() === 'admin123') warnings.push('DEFAULT_ADMIN_PASSWORD is still admin123; change it before public deployment.');
+
+checkMigrationFiles();
 
 if (!errors.length) await checkDatabase();
 
@@ -63,6 +66,27 @@ function requireSecret(name, minLength, allowBase64 = false) {
   if (/replace-with|change-me|dev-only/i.test(value)) errors.push(`${name} still uses a placeholder value.`);
   const byteLength = allowBase64 ? Math.max(Buffer.from(value, 'utf8').length, Buffer.from(value, 'base64').length, Buffer.from(value, 'hex').length) : Buffer.from(value, 'utf8').length;
   if (byteLength < minLength) errors.push(`${name} must contain at least ${minLength} bytes.`);
+}
+
+function checkMigrationFiles() {
+  const migrationsDir = resolve('prisma/migrations');
+  if (!existsSync(migrationsDir)) return;
+
+  for (const file of walk(migrationsDir)) {
+    if (!file.endsWith('.sql')) continue;
+    const content = readFileSync(file);
+    if (content.length >= 3 && content[0] === 0xef && content[1] === 0xbb && content[2] === 0xbf) {
+      errors.push(`${file} must be UTF-8 without BOM. MariaDB may fail to parse BOM-prefixed SQL migrations.`);
+    }
+  }
+}
+
+function* walk(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = resolve(dir, entry.name);
+    if (entry.isDirectory()) yield* walk(fullPath);
+    else yield fullPath;
+  }
 }
 
 async function checkDatabase() {
