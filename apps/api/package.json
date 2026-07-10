@@ -21,6 +21,8 @@
     "@shiye/shared": "file:../../packages/shared",
     "@shiye/xui-client": "file:../../packages/xui-client",
     "bcryptjs": "^2.4.3",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
     "cookie-parser": "^1.4.7",
     "jsonwebtoken": "^9.0.2",
     "reflect-metadata": "^0.2.2",
