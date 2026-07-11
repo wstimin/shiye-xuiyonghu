@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Activity, Edit3, Plus, RefreshCw, Trash2, Users, Wifi } from 'lucide-vue-next';
 import { api } from '../api';
@@ -39,6 +39,11 @@ const error = ref('');
 const editingId = ref('');
 const dialogVisible = ref(false);
 const form = reactive({ name: '', baseUrl: '', basePath: '', username: '', password: '', token: '', tlsServerName: '', tlsCertFile: '', tlsKeyFile: '', realityTarget: '', realityServerName: '', realityFingerprint: 'chrome', realitySpiderX: '/', enabled: true, remark: '' });
+
+const enabledServerCount = computed(() => servers.value.filter((server) => server.enabled).length);
+const tokenServerCount = computed(() => servers.value.filter((server) => server.hasToken).length);
+const tlsServerCount = computed(() => servers.value.filter((server) => hasTlsConfig(server)).length);
+const realityAutoCount = computed(() => servers.value.filter((server) => !server.config?.realityTarget || !server.config?.realityServerName).length);
 
 async function loadServers() {
   loading.value = true;
@@ -256,6 +261,13 @@ onMounted(loadServers);
   </div>
   <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
 
+  <div class="metric-grid compact-metrics">
+    <div class="metric"><span>连接服务器</span><strong>{{ servers.length }}</strong><small>启用 {{ enabledServerCount }}</small></div>
+    <div class="metric"><span>Token 凭据</span><strong>{{ tokenServerCount }}</strong><small>优先使用 API Token</small></div>
+    <div class="metric"><span>TLS 证书</span><strong>{{ tlsServerCount }}</strong><small>可自动创建 TLS 节点</small></div>
+    <div class="metric"><span>Reality 自动</span><strong>{{ realityAutoCount }}</strong><small>目标或 SNI 留空自动生成</small></div>
+  </div>
+
   <div class="panel list-panel">
     <div class="panel-toolbar">
       <strong>连接服务器列表</strong>
@@ -288,13 +300,15 @@ onMounted(loadServers);
       <el-table-column label="操作" width="450" fixed="right">
         <template #default="{ row }: { row: XuiServer }">
           <div class="row-actions row-actions-split">
-            <div class="row-action-group">
+            <div class="row-action-group remote-action">
+              <span class="action-group-label">远端读取</span>
               <el-button size="small" :loading="testingIds.has(row.id)" @click="testSaved(row)"><Wifi :size="15" />测试</el-button>
               <el-button size="small" :loading="statusIds.has(row.id)" @click="showServerStatus(row)"><Activity :size="15" />状态</el-button>
               <el-button size="small" :loading="presenceIds.has(row.id)" @click="showClientPresence(row)"><Users :size="15" />在线</el-button>
               <el-button size="small" :loading="syncingIds.has(row.id)" :disabled="!row.enabled" @click="syncServer(row)"><RefreshCw :size="15" />同步</el-button>
             </div>
-            <div class="row-action-group">
+            <div class="row-action-group manage-action">
+              <span class="action-group-label">管理</span>
               <el-button size="small" @click="editServer(row)"><Edit3 :size="15" />编辑</el-button>
               <el-button size="small" type="danger" plain @click="removeServer(row)"><Trash2 :size="15" />删除</el-button>
             </div>
