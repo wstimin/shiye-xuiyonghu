@@ -25,6 +25,7 @@ const nodes = ref<UserNode[]>([]);
 const searchQuery = ref('');
 const monthsByNode = ref<Record<string, number>>({});
 const qrPreview = ref<{ title: string; image: string } | null>(null);
+const renewErrorDialog = ref<{ title: string; message: string } | null>(null);
 
 const filteredNodes = computed(() => {
   const keyword = searchQuery.value.trim().toLowerCase();
@@ -53,8 +54,8 @@ async function loadNodes() {
 
 async function renewNode(nodeId: string) {
   renewingId.value = nodeId;
-  error.value = '';
   message.value = '';
+  renewErrorDialog.value = null;
   try {
     const months = monthsByNode.value[nodeId] || 1;
     await api('/api/user/renewals', { method: 'POST', body: { nodeId, months } });
@@ -62,8 +63,9 @@ async function renewNode(nodeId: string) {
     notifySuccess(message.value);
     await loadNodes();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '续费失败';
-    notifyError(error.value);
+    const text = err instanceof Error ? err.message : '续费失败';
+    renewErrorDialog.value = { title: '续费失败', message: text };
+    notifyError(text);
   } finally {
     renewingId.value = '';
   }
@@ -121,6 +123,10 @@ async function showQrCode(node: UserNode, link: string, index: number) {
 
 function closeQrCode() {
   qrPreview.value = null;
+}
+
+function closeRenewError() {
+  renewErrorDialog.value = null;
 }
 
 function formatDate(value?: string | null) {
@@ -222,6 +228,17 @@ onMounted(loadNodes);
         <button class="copy-button" type="button" title="关闭" @click="closeQrCode"><X :size="16" /></button>
       </div>
       <img :src="qrPreview.image" alt="节点二维码" />
+    </div>
+  </div>
+
+  <div v-if="renewErrorDialog" class="qr-modal" @click.self="closeRenewError">
+    <div class="qr-modal-panel message-modal-panel">
+      <div class="qr-modal-head">
+        <strong>{{ renewErrorDialog.title }}</strong>
+        <button class="copy-button" type="button" title="关闭" @click="closeRenewError"><X :size="16" /></button>
+      </div>
+      <p class="message-modal-text">{{ renewErrorDialog.message }}</p>
+      <button class="modal-primary-button" type="button" @click="closeRenewError">知道了</button>
     </div>
   </div>
 </template>

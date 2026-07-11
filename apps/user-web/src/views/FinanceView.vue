@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import QRCode from 'qrcode';
-import { Banknote } from 'lucide-vue-next';
+import { Banknote, ShoppingBag, TicketCheck } from 'lucide-vue-next';
 import { api } from '../api';
 import { notifyError, notifySuccess } from '../notify';
 import alipayIcon from '../assets/payments/alipay.webp';
@@ -36,10 +36,10 @@ const quickAmounts = [10, 30, 50, 100];
 
 const selectedChannel = computed(() => channels.value.find((item) => item.id === rechargeForm.channelId));
 const paymentMethods = computed<PaymentMethod[]>(() => ([
-  { provider: 'alipay' as const, label: '支付宝', image: alipayIcon, channel: channelForProvider('alipay') },
-  { provider: 'wechat' as const, label: '微信支付', image: wechatIcon, channel: channelForProvider('wechat') },
+  paymentMethod('alipay', '支付宝', alipayIcon),
+  paymentMethod('wechat', '微信支付', wechatIcon),
   epayMethod(),
-  { provider: 'bepusdt' as const, label: 'BEpusdt', image: usdtIcon, channel: channelForProvider('bepusdt') }
+  paymentMethod('bepusdt', 'BEpusdt', usdtIcon)
 ]));
 
 async function loadFinanceData() {
@@ -68,11 +68,16 @@ function channelForProvider(provider: PaymentProvider) {
   return channels.value.find((item) => item.provider === provider);
 }
 
+function paymentMethod(provider: PaymentProvider, fallbackLabel: string, image: string): PaymentMethod {
+  const channel = channelForProvider(provider);
+  return { provider, label: channel?.name || fallbackLabel, image, channel };
+}
+
 function epayMethod(): PaymentMethod {
   const channel = channelForProvider('epay');
   const type = channel?.type || '';
-  if (type === 'paypal') return { provider: 'epay' as const, label: '易支付 / PayPal', image: paypalIcon, channel };
-  return { provider: 'epay' as const, label: '易支付', icon: Banknote, channel };
+  if (type === 'paypal') return { provider: 'epay' as const, label: channel?.name || '易支付 / PayPal', image: paypalIcon, channel };
+  return { provider: 'epay' as const, label: channel?.name || '易支付', icon: Banknote, channel };
 }
 
 function selectPaymentMethod(channel?: PaymentChannel) {
@@ -195,15 +200,24 @@ onMounted(loadFinanceData);
       </div>
     </section>
 
-    <section class="panel finance-form">
-      <div class="finance-card-title">
-        <h2>卡密兑换</h2>
-        <button v-if="publicSettings.cardPurchaseUrl" type="button" class="secondary-button" @click="openPurchaseUrl">购买卡密</button>
+    <section class="panel finance-form card-redeem-panel">
+      <div class="card-redeem-head">
+        <div class="card-redeem-title">
+          <span class="card-redeem-icon"><TicketCheck :size="20" /></span>
+          <div>
+            <h2>卡密兑换</h2>
+            <p>输入管理员发放的卡密后，金额会直接加入账户余额。</p>
+          </div>
+        </div>
+        <button v-if="publicSettings.cardPurchaseUrl" type="button" class="secondary-button card-buy-button" @click="openPurchaseUrl">
+          <ShoppingBag :size="16" />购买卡密
+        </button>
       </div>
-      <form @submit.prevent="redeemCard">
-        <input v-model="code" placeholder="输入卡密" />
-        <button :disabled="redeeming || !code.trim()">{{ redeeming ? '兑换中' : '兑换' }}</button>
+      <form class="card-redeem-form" @submit.prevent="redeemCard">
+        <input v-model="code" placeholder="输入卡密" autocomplete="one-time-code" />
+        <button :disabled="redeeming || !code.trim()">{{ redeeming ? '兑换中' : '立即兑换' }}</button>
       </form>
+      <div class="card-redeem-tip">请完整粘贴卡密，兑换成功后可在首页查看余额变化。</div>
     </section>
   </div>
 </template>
