@@ -371,41 +371,70 @@ onMounted(loadNodes);
     </el-table>
   </div>
 
-  <el-dialog v-model="dialogVisible" :title="editingId ? '编辑路由节点' : '添加路由节点'" width="820px" destroy-on-close>
-    <el-form :model="form" label-width="112px" class="dialog-form-grid">
-      <el-form-item label="节点名称"><el-input v-model="form.name" /></el-form-item>
-      <el-form-item label="连接服务器">
-        <el-select v-model="form.serverId" placeholder="选择服务器" style="width: 100%">
-          <el-option v-for="server in servers" :key="server.id" :label="server.name" :value="server.id" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="远端入站">
-        <el-segmented v-model="form.remoteMode" :options="[{ label: '自动创建', value: 'create' }, { label: '绑定已有', value: 'bind' }]" />
-      </el-form-item>
-      <el-form-item v-if="form.remoteMode === 'bind'" label="入站 ID"><el-input-number v-model="form.inboundId" :min="1" style="width: 100%" /></el-form-item>
-      <el-form-item v-else label="端口">
-        <el-input-number v-model="form.inboundPort" :min="1" :max="65535" placeholder="自动分配" style="width: 100%" />
-      </el-form-item>
-      <el-form-item label="节点类型">
-        <el-select v-model="form.protocol" style="width: 100%">
-          <el-option v-for="item in protocolOptions" :key="item.value" :label="item.label" :value="item.value" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="传输安全">
-        <el-select v-model="form.encryption" style="width: 100%">
-          <el-option v-for="item in encryptionOptions" :key="item.value" :label="item.label" :value="item.value" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="月价格"><el-input-number v-model="form.priceMonthly" :min="0" :precision="2" style="width: 100%" /></el-form-item>
-      <el-form-item label="流量 GB"><el-input-number v-model="form.trafficLimitGb" :min="0" :precision="2" style="width: 100%" /></el-form-item>
-      <el-form-item label="启用节点"><el-switch v-model="form.enabled" /></el-form-item>
-      <el-form-item label="启用出站"><el-switch v-model="form.socksRelayEnabled" /></el-form-item>
-      <el-form-item label="出站节点">
-        <el-select v-model="form.socksNodeId" :disabled="!form.socksRelayEnabled" placeholder="选择出站节点" style="width: 100%">
-          <el-option v-for="node in enabledSocksNodes" :key="node.id" :label="`${node.name} (${node.host}:${node.port})`" :value="node.id" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="备注"><el-input v-model="form.remark" /></el-form-item>
+  <el-dialog v-model="dialogVisible" :title="editingId ? '编辑路由节点' : '添加路由节点'" width="min(920px, 94vw)" destroy-on-close>
+    <el-form :model="form" label-width="112px" class="sectioned-dialog-form">
+      <section class="dialog-form-section">
+        <div class="dialog-section-head"><strong>基础信息</strong><span>节点名称、所属连接服务器和启用状态</span></div>
+        <div class="dialog-form-grid">
+          <el-form-item label="节点名称"><el-input v-model="form.name" /></el-form-item>
+          <el-form-item label="连接服务器">
+            <el-select v-model="form.serverId" placeholder="选择服务器" style="width: 100%">
+              <el-option v-for="server in servers" :key="server.id" :label="server.name" :value="server.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="启用节点"><el-switch v-model="form.enabled" /></el-form-item>
+        </div>
+      </section>
+
+      <section class="dialog-form-section">
+        <div class="dialog-section-head"><strong>远端入站</strong><span>自动创建会让远端返回入站 ID；绑定已有需要填写远端入站 ID</span></div>
+        <div class="dialog-form-grid">
+          <el-form-item label="远端入站">
+            <el-segmented v-model="form.remoteMode" :options="[{ label: '自动创建', value: 'create' }, { label: '绑定已有', value: 'bind' }]" />
+          </el-form-item>
+          <el-form-item v-if="form.remoteMode === 'bind'" label="入站 ID"><el-input-number v-model="form.inboundId" :min="1" style="width: 100%" /></el-form-item>
+          <el-form-item v-else label="端口">
+            <el-input-number v-model="form.inboundPort" :min="1" :max="65535" placeholder="自动分配" style="width: 100%" />
+          </el-form-item>
+        </div>
+      </section>
+
+      <section class="dialog-form-section">
+        <div class="dialog-section-head"><strong>节点协议</strong><span>选择节点类型和 TLS/Reality 等传输安全</span></div>
+        <div class="dialog-form-grid">
+          <el-form-item label="节点类型">
+            <el-select v-model="form.protocol" style="width: 100%">
+              <el-option v-for="item in protocolOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="传输安全">
+            <el-select v-model="form.encryption" style="width: 100%">
+              <el-option v-for="item in encryptionOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
+        </div>
+      </section>
+
+      <section class="dialog-form-section">
+        <div class="dialog-section-head"><strong>出站中转</strong><span>启用后可把该入站流量转发到已配置的出站节点</span></div>
+        <div class="dialog-form-grid">
+          <el-form-item label="启用出站"><el-switch v-model="form.socksRelayEnabled" /></el-form-item>
+          <el-form-item label="出站节点">
+            <el-select v-model="form.socksNodeId" :disabled="!form.socksRelayEnabled" placeholder="选择出站节点" style="width: 100%">
+              <el-option v-for="node in enabledSocksNodes" :key="node.id" :label="`${node.name} (${node.host}:${node.port})`" :value="node.id" />
+            </el-select>
+          </el-form-item>
+        </div>
+      </section>
+
+      <section class="dialog-form-section">
+        <div class="dialog-section-head"><strong>计费与备注</strong><span>用户端展示价格，流量额度会同步到远端已有客户端</span></div>
+        <div class="dialog-form-grid">
+          <el-form-item label="月价格"><el-input-number v-model="form.priceMonthly" :min="0" :precision="2" style="width: 100%" /></el-form-item>
+          <el-form-item label="流量 GB"><el-input-number v-model="form.trafficLimitGb" :min="0" :precision="2" style="width: 100%" /></el-form-item>
+          <el-form-item label="备注" class="form-item-full"><el-input v-model="form.remark" /></el-form-item>
+        </div>
+      </section>
     </el-form>
     <template #footer>
       <el-button @click="dialogVisible = false">取消</el-button>

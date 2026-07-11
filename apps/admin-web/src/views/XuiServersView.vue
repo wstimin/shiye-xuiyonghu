@@ -304,23 +304,46 @@ onMounted(loadServers);
     </el-table>
   </div>
 
-  <el-dialog v-model="dialogVisible" :title="editingId ? '编辑连接服务器' : '添加连接服务器'" width="760px" destroy-on-close>
-    <el-form :model="form" label-width="96px" class="dialog-form-grid">
-      <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
-      <el-form-item label="面板地址"><el-input v-model="form.baseUrl" placeholder="https://xui.example.com" /></el-form-item>
-      <el-form-item label="面板路径"><el-input v-model="form.basePath" placeholder="根路径留空" /></el-form-item>
-      <el-form-item label="账号"><el-input v-model="form.username" /></el-form-item>
-      <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password placeholder="编辑时留空不修改" /></el-form-item>
-      <el-form-item label="API Token"><el-input v-model="form.token" type="password" show-password placeholder="编辑时留空不修改" /></el-form-item>
-      <el-form-item label="TLS 域名"><el-input v-model="form.tlsServerName" placeholder="例如 panel.example.com" /></el-form-item>
-      <el-form-item label="证书路径"><el-input v-model="form.tlsCertFile" placeholder="例如 /root/cert/fullchain.pem" /></el-form-item>
-      <el-form-item label="私钥路径"><el-input v-model="form.tlsKeyFile" placeholder="例如 /root/cert/privkey.pem" /></el-form-item>
-      <el-form-item label="Reality 目标"><el-input v-model="form.realityTarget" placeholder="留空自动生成，例如 example.com:443" /></el-form-item>
-      <el-form-item label="Reality SNI"><el-input v-model="form.realityServerName" placeholder="留空按 Reality 目标自动生成" /></el-form-item>
-      <el-form-item label="指纹"><el-input v-model="form.realityFingerprint" placeholder="chrome" /></el-form-item>
-      <el-form-item label="SpiderX"><el-input v-model="form.realitySpiderX" placeholder="/" /></el-form-item>
-      <el-form-item label="启用"><el-switch v-model="form.enabled" /></el-form-item>
-      <el-form-item label="备注"><el-input v-model="form.remark" /></el-form-item>
+  <el-dialog v-model="dialogVisible" :title="editingId ? '编辑连接服务器' : '添加连接服务器'" width="min(900px, 94vw)" destroy-on-close>
+    <el-form :model="form" label-width="96px" class="sectioned-dialog-form">
+      <section class="dialog-form-section">
+        <div class="dialog-section-head"><strong>连接信息</strong><span>3x-ui 面板地址、路径和启用状态</span></div>
+        <div class="dialog-form-grid">
+          <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
+          <el-form-item label="面板地址"><el-input v-model="form.baseUrl" placeholder="https://xui.example.com" /></el-form-item>
+          <el-form-item label="面板路径"><el-input v-model="form.basePath" placeholder="根路径留空" /></el-form-item>
+          <el-form-item label="启用"><el-switch v-model="form.enabled" /></el-form-item>
+        </div>
+      </section>
+
+      <section class="dialog-form-section">
+        <div class="dialog-section-head"><strong>访问凭据</strong><span>优先使用 API Token；账号密码用于面板登录接口</span></div>
+        <div class="dialog-form-grid">
+          <el-form-item label="账号"><el-input v-model="form.username" /></el-form-item>
+          <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password placeholder="编辑时留空不修改" /></el-form-item>
+          <el-form-item label="API Token" class="form-item-full"><el-input v-model="form.token" type="password" show-password placeholder="编辑时留空不修改" /></el-form-item>
+        </div>
+      </section>
+
+      <section class="dialog-form-section">
+        <div class="dialog-section-head"><strong>TLS 证书</strong><span>自动创建 TLS 节点时使用，路径需要是远端服务器上的真实文件</span></div>
+        <div class="dialog-form-grid">
+          <el-form-item label="TLS 域名"><el-input v-model="form.tlsServerName" placeholder="例如 panel.example.com" /></el-form-item>
+          <el-form-item label="证书路径"><el-input v-model="form.tlsCertFile" placeholder="例如 /root/cert/fullchain.pem" /></el-form-item>
+          <el-form-item label="私钥路径"><el-input v-model="form.tlsKeyFile" placeholder="例如 /root/cert/privkey.pem" /></el-form-item>
+        </div>
+      </section>
+
+      <section class="dialog-form-section">
+        <div class="dialog-section-head"><strong>Reality 默认值</strong><span>目标和 SNI 可留空，由系统按可用目标自动生成</span></div>
+        <div class="dialog-form-grid">
+          <el-form-item label="Reality 目标"><el-input v-model="form.realityTarget" placeholder="留空自动生成，例如 example.com:443" /></el-form-item>
+          <el-form-item label="Reality SNI"><el-input v-model="form.realityServerName" placeholder="留空按 Reality 目标自动生成" /></el-form-item>
+          <el-form-item label="指纹"><el-input v-model="form.realityFingerprint" placeholder="chrome" /></el-form-item>
+          <el-form-item label="SpiderX"><el-input v-model="form.realitySpiderX" placeholder="/" /></el-form-item>
+          <el-form-item label="备注" class="form-item-full"><el-input v-model="form.remark" /></el-form-item>
+        </div>
+      </section>
     </el-form>
     <template #footer>
       <el-button :loading="testingForm" :disabled="!form.baseUrl" @click="testForm"><Wifi :size="15" />测试连接</el-button>

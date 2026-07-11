@@ -45,6 +45,13 @@ body { margin: 0; font-family: Inter, "Microsoft YaHei", Arial, sans-serif; back
 .list-panel + .list-panel { margin-top: 16px; }
 .dialog-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
 .dialog-form-grid .el-form-item { margin-bottom: 0; }
+.sectioned-dialog-form { display: grid; gap: 14px; }
+.dialog-form-section { display: grid; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid #e5e7eb; }
+.dialog-form-section:last-child { padding-bottom: 0; border-bottom: 0; }
+.dialog-section-head { display: grid; gap: 3px; }
+.dialog-section-head strong { color: #111827; font-size: 14px; }
+.dialog-section-head span { color: #64748b; font-size: 12px; line-height: 1.45; }
+.form-item-full { grid-column: 1 / -1; }
 .payment-dialog-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
 .payment-dialog-form .el-form-item { margin-bottom: 0; }
 .payment-dialog-form .el-form-item:nth-child(n + 10) { grid-column: 1 / -1; }
@@ -162,4 +169,4 @@ body { margin: 0; font-family: Inter, "Microsoft YaHei", Arial, sans-serif; back
 @media (max-width: 1200px) { .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .job-card-grid { grid-template-columns: 1fr; } }
 @media (max-width: 1100px) { .inline-form, .payment-form, .customer-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .bind-row-wide, .balance-row, .provider-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .node-grid, .settings-grid { grid-template-columns: 1fr; } .expanded-node-panel { padding-left: 12px; } }
-@media (max-width: 720px) { .page-head, .panel-toolbar { display: grid; justify-content: stretch; } .page-actions, .filter-bar { justify-content: flex-start; } .status-strip, .job-card-body, .inline-form, .bind-row, .bind-row-wide, .balance-row, .payment-form, .customer-form-grid, .dialog-form-grid, .payment-dialog-form, .generated-template-grid, .batch-code-stack { grid-template-columns: 1fr; } .job-card-head { grid-template-columns: 42px minmax(0, 1fr); } .job-card-head .el-switch { grid-column: 1 / -1; justify-self: start; } .customer-node-row { grid-template-columns: 1fr; } .node-actions, .node-action-group, .row-actions, .row-action-group { flex-wrap: wrap; justify-content: flex-start; } .generated-batch-head { display: grid; } }
+@media (max-width: 720px) { .page-head, .panel-toolbar { display: grid; justify-content: stretch; } .page-actions, .filter-bar { justify-content: flex-start; } .status-strip, .job-card-body, .inline-form, .bind-row, .bind-row-wide, .balance-row, .payment-form, .customer-form-grid, .dialog-form-grid, .payment-dialog-form, .generated-template-grid, .batch-code-stack { grid-template-columns: 1fr; } .form-item-full { grid-column: auto; } .job-card-head { grid-template-columns: 42px minmax(0, 1fr); } .job-card-head .el-switch { grid-column: 1 / -1; justify-self: start; } .customer-node-row { grid-template-columns: 1fr; } .node-actions, .node-action-group, .row-actions, .row-action-group { flex-wrap: wrap; justify-content: flex-start; } .generated-batch-head { display: grid; } }
