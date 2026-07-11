@@ -399,7 +399,7 @@ onMounted(loadCards);
                     <strong>{{ batch.name }}</strong>
                     <span>{{ batch.amount }} 元 / {{ batch._count?.cards ?? batch.quantity }} 张 / 未使用 {{ unusedCount(batch) }} / 已使用 {{ usedCount(batch) }} / {{ formatDate(batch.createdAt) }}</span>
                   </div>
-                  <div class="table-toolbar-actions">
+                  <div class="table-toolbar-actions batch-actions">
                     <el-button size="small" type="success" plain :disabled="!hasUnusedFullCodes(batch)" @click="copyCodes(unusedFullCodes(batch), '已复制本批未使用卡密')"><Copy :size="15" />复制未使用</el-button>
                     <el-button size="small" type="primary" plain :disabled="!hasFullCodes(batch)" @click="copyCodes(fullCodes(batch))"><Copy :size="15" />复制整批</el-button>
                     <el-button size="small" plain :loading="clearingUsedBatchIds.has(batch.id)" @click="removeUsedBatchCards(batch)"><Trash2 :size="15" />清除已使用</el-button>
