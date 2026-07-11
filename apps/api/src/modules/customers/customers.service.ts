@@ -4,11 +4,10 @@ import { balanceAdjustSchema, customerUpsertSchema } from '@shiye/shared';
 import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { XuiService } from '../xui/xui.service.js';
 
 @Injectable()
 export class CustomersService {
-  constructor(private readonly prisma: PrismaService, private readonly xui: XuiService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async list() {
     const [items, total] = await this.prisma.$transaction([
@@ -66,12 +65,13 @@ export class CustomersService {
     });
     if (!customer) throw new NotFoundException('用户不存在');
 
-    for (const node of customer.nodes) {
-      await this.xui.deleteCustomerNode(id, node.id);
-    }
-
     await this.prisma.customer.delete({ where: { id } });
-    return { deleted: true, id };
+    return {
+      deleted: true,
+      id,
+      unboundNodes: customer.nodes.length,
+      remoteCleanup: { skipped: true, reason: 'panel customer deletion is local only; remote 3x-ui clients belong to service nodes' }
+    };
   }
 
   async adjustBalance(id: string, input: z.infer<typeof balanceAdjustSchema>, operator = 'admin') {

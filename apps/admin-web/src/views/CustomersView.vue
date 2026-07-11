@@ -313,7 +313,7 @@ function editCustomer(customer: Customer) {
 }
 
 async function removeCustomer(customer: Customer) {
-  await ElMessageBox.confirm(`确认删除用户「${customer.name}」？系统会先删除该用户所有远端 3x-ui 客户端，再删除本地用户。`, '删除确认', { type: 'warning' });
+  await ElMessageBox.confirm(`确认删除用户「${customer.name}」？系统只会删除面板用户和本地绑定，不会删除路由节点或远端 3x-ui 入站/客户端。`, '删除确认', { type: 'warning' });
   await api(`/api/admin/customers/${customer.id}`, { method: 'DELETE' });
   ElMessage.success('用户已删除');
   if (editingCustomerId.value === customer.id) resetCustomerForm();

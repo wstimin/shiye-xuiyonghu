@@ -11,6 +11,7 @@ type UserNode = {
   trafficLimitGb: string;
   usedTrafficGb: string;
   links?: string[];
+  linkError?: string | null;
   subId?: string;
   serviceNode: { name: string; protocol: string; priceMonthly: string; server: { name: string } };
 };
@@ -138,7 +139,7 @@ onMounted(loadNodes);
           <button class="copy-button" type="button" title="显示二维码" @click="showQrCode(node, link, index)"><QrCode :size="15" /></button>
         </div>
       </div>
-      <div v-else class="empty-hint">暂未获取到 3-xui 节点链接，请联系管理员同步节点。</div>
+      <div v-else class="empty-hint">{{ node.linkError ? `节点链接获取失败：${node.linkError}` : '暂未获取到 3-xui 节点链接，请联系管理员同步节点。' }}</div>
       <form class="renew-form" @submit.prevent="renewNode(node.id)">
         <select v-model.number="monthsByNode[node.id]">
           <option :value="1">1 个月</option>

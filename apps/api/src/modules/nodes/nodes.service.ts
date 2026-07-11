@@ -285,7 +285,7 @@ export class NodesService {
     const current = await this.ensureServiceNode(id);
     const remoteClientCleanup = { skipped: true, reason: 'clients belong to the service-node inbound and are removed with the inbound' };
     if (current.inboundId) await this.xui.syncServiceNodeRemoteConfig(id, { removeOnly: true }).catch(() => undefined);
-    const remoteInboundCleanup = await this.xui.deleteManagedServiceNodeInbound(id).catch((error) => ({ failed: true, message: error instanceof Error ? error.message : String(error) }));
+    const remoteInboundCleanup = await this.xui.deleteManagedServiceNodeInbound(id);
     const customerNodes = await this.prisma.customerNode.findMany({ where: { serviceNodeId: id }, select: { id: true } });
     const customerNodeIds = customerNodes.map((node) => node.id);
     await this.prisma.$transaction([
@@ -359,8 +359,12 @@ export class NodesService {
       include: { serviceNode: { include: { server: { select: { id: true, name: true, baseUrl: true } } } } }
     });
     return Promise.all(nodes.map(async (node) => {
-      const links = await this.xui.customerNodeLinks(customerId, node.id).catch(() => [] as string[]);
-      return { ...node, links, subId: jsonObject(node.config).subId || node.xuiEmail };
+      let linkError: string | null = null;
+      const links = await this.xui.customerNodeLinks(customerId, node.id).catch((error) => {
+        linkError = error instanceof Error ? error.message : String(error);
+        return [] as string[];
+      });
+      return { ...node, links, linkError, subId: jsonObject(node.config).subId || node.xuiEmail };
     }));
   }
 

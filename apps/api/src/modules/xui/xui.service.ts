@@ -76,7 +76,6 @@ type RealityTargetInfo = {
 
 const SHIYE_ROUTE_MARK = 'shiye-service-node';
 const SHARE_LINK_PROTOCOLS = new Set(['vless', 'vmess', 'trojan', 'shadowsocks', 'hysteria']);
-const DEFAULT_REALITY_TARGET = 'www.microsoft.com:443';
 
 @Injectable()
 export class XuiService {
@@ -393,8 +392,7 @@ export class XuiService {
           const uuid = existing.uuid || remoteClientUuid || randomUUID();
           const subId = existing.subId || remoteClientSubId || this.subscriptionId(uuid);
           const email = existing.email || remoteClientEmail || this.serviceClientEmail(serviceNode.name, serviceNode.inboundId);
-          const payload = await client.updateClient(existing.email || email, {
-            ...this.buildXuiClient({
+          const payload = await client.updateClient(existing.email || email, this.buildXuiClient({
               uuid,
               subId,
               email,
@@ -402,9 +400,7 @@ export class XuiService {
               expireAt: null,
               trafficLimitGb: serviceNode.trafficLimitGb,
               flow: this.clientFlowForServiceNode(serviceNode)
-            }),
-            inboundIds: [serviceNode.inboundId]
-          });
+            }));
           this.assertXuiSuccess(payload);
           results.push({ target: `service:${email}`, updated: true });
         } else {
@@ -770,7 +766,7 @@ export class XuiService {
         flow: this.clientFlowForServiceNode(customerNode.serviceNode)
       });
       const route = 'clients/update';
-      const payload = await client.updateClient(existing.email || xuiEmail, { ...xuiClient, inboundIds: [inboundId] });
+      const payload = await client.updateClient(existing.email || xuiEmail, xuiClient);
       this.assertXuiSuccess(payload);
       const links = await this.linksForClient(client, xuiEmail, subId).catch(() => [] as string[]);
       const syncedAt = new Date();
@@ -815,7 +811,17 @@ export class XuiService {
     if (savedLinks.length) return savedLinks;
     const client = await this.createAuthenticatedClient(customerNode.serviceNode.server);
     const subId = typeof config.subId === 'string' ? config.subId : undefined;
-    return this.linksForClient(client, customerNode.xuiEmail, subId);
+    try {
+      return await this.linksForClient(client, customerNode.xuiEmail, subId);
+    } catch (error) {
+      await this.writeSyncLog(customerNode.serviceNode.serverId, 'customer-node-links', 'failed', this.errorMessage(error), {
+        customerId,
+        customerNodeId,
+        xuiEmail: customerNode.xuiEmail,
+        subId
+      });
+      throw error;
+    }
   }
 
   private async createAuthenticatedClient(config: XuiServerConfig) {
@@ -1062,9 +1068,12 @@ export class XuiService {
 
     const scanned = await this.scanRealityTargets(client).catch(() => null);
     const discovered = this.bestRealityScanResult(scanned);
-    if (discovered) return this.realityInfoFromScan(discovered, serverConfig) || this.realityInfoFromTarget(serverConfig, DEFAULT_REALITY_TARGET);
+    if (discovered) {
+      const info = this.realityInfoFromScan(discovered, serverConfig);
+      if (info) return info;
+    }
 
-    return this.realityInfoFromTarget(serverConfig, DEFAULT_REALITY_TARGET);
+    throw new BadRequestException('Reality 自动创建没有扫描到可用目标网站。请在连接服务器配置里填写 Reality 目标（例如 example.com:443）或 Reality SNI 后再创建。');
   }
 
   private async scanRealityTarget(client: XuiClient, target: string) {
@@ -1112,9 +1121,6 @@ export class XuiService {
   private realityTarget(serverConfig: Record<string, unknown>) {
     const target = String(serverConfig.realityTarget || '').trim();
     if (target) return this.normalizeRealityTarget(target);
-    const defaultTarget = DEFAULT_REALITY_TARGET;
-    if (defaultTarget) return defaultTarget;
-
     const host = this.hostFromUrl(String(serverConfig.baseUrl || ''));
     if (host && !this.isIpAddress(host)) return `${host}:443`;
 
