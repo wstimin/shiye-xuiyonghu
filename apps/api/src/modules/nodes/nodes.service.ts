@@ -376,17 +376,32 @@ export class NodesService {
       if (duplicated) throw new BadRequestException('Customer already bound to this service node');
     }
 
-    const nextXuiEmail = input.xuiEmail === undefined || input.xuiEmail === '' ? current.xuiEmail : input.xuiEmail;
+    const serviceConfig = jsonObject(serviceNode.config) as ServiceNodeConfig;
+    const nodeChanged = serviceNodeId !== current.serviceNodeId;
+    const serviceRemoteEmail = stringValue(serviceConfig.remoteClientEmail);
+    const serviceRemoteUuid = stringValue(serviceConfig.remoteClientUuid);
+    const serviceRemoteSubId = stringValue(serviceConfig.remoteClientSubId);
+    const serviceRemoteLinks = Array.isArray(serviceConfig.remoteClientLinks) ? serviceConfig.remoteClientLinks : [];
+    const nextXuiEmail = nodeChanged
+      ? input.xuiEmail || serviceRemoteEmail || current.xuiEmail
+      : input.xuiEmail === undefined || input.xuiEmail === '' ? current.xuiEmail : input.xuiEmail;
+    if (!nextXuiEmail) throw new BadRequestException('Service node is missing a remote 3x-ui client. Sync/import the service node first.');
+    const nextUuid = nodeChanged ? input.uuid || serviceRemoteUuid || null : input.uuid === undefined ? current.uuid : input.uuid || current.uuid;
+    const currentConfig = jsonObject(current.config);
+    const nextConfig = nodeChanged
+      ? { uuid: nextUuid, subId: serviceRemoteSubId, links: serviceRemoteLinks }
+      : currentConfig;
 
     const node = await this.prisma.customerNode.update({
       where: { id: customerNodeId },
       data: {
         serviceNodeId: input.serviceNodeId,
         xuiEmail: nextXuiEmail,
-        uuid: input.uuid === undefined ? undefined : input.uuid || current.uuid,
+        uuid: nextUuid,
         expireAt: input.expireAt === undefined ? undefined : input.expireAt || null,
         trafficLimitGb: input.trafficLimitGb === undefined ? undefined : new Prisma.Decimal(input.trafficLimitGb ?? serviceNode.trafficLimitGb),
-        status: 'active'
+        status: 'active',
+        config: this.toJsonValue(nextConfig)
       },
       include: { serviceNode: { include: { server: true } }, customer: { select: { id: true, name: true, loginUsername: true } } }
     });

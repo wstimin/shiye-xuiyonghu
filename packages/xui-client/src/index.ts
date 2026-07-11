@@ -97,6 +97,14 @@ export class XuiClient {
     return this.request('/panel/api/server/getNewX25519Cert');
   }
 
+  scanRealityTarget(target: string) {
+    return this.formRequest('/panel/api/server/scanRealityTarget', { method: 'POST', body: { target } });
+  }
+
+  scanRealityTargets(targets?: string) {
+    return this.formRequest('/panel/api/server/scanRealityTargets', { method: 'POST', body: { targets: targets || '' } });
+  }
+
   addInbound(body: unknown) {
     return this.request('/panel/api/inbounds/add', { method: 'POST', body });
   }

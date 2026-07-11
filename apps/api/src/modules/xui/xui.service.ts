@@ -67,8 +67,15 @@ type ClientMatch = {
   subId?: string;
 };
 
+type RealityTargetInfo = {
+  target: string;
+  serverName: string;
+  scan?: Record<string, unknown> | null;
+};
+
 const SHIYE_ROUTE_MARK = 'shiye-service-node';
 const SHARE_LINK_PROTOCOLS = new Set(['vless', 'vmess', 'trojan', 'shadowsocks', 'hysteria']);
+const DEFAULT_REALITY_TARGET = 'www.microsoft.com:443';
 
 @Injectable()
 export class XuiService {
@@ -111,10 +118,13 @@ export class XuiService {
 
     const config = this.xuiObject(serviceNode.config) as ServiceNodeConfig;
     const client = await this.createAuthenticatedClient(serviceNode.server);
-    const inboundPayload = await client.getInbound(serviceNode.inboundId);
-    this.assertXuiSuccess(inboundPayload);
-    const inbound = this.xuiObject(this.xuiObject(inboundPayload).obj || this.xuiObject(inboundPayload).data || inboundPayload);
-    const inboundTag = String(inbound.tag || `inbound-${serviceNode.inboundId}`);
+    let inboundTag = String(config.remoteInboundTag || `inbound-${serviceNode.inboundId}`);
+    if (!options.removeOnly) {
+      const inboundPayload = await client.getInbound(serviceNode.inboundId);
+      this.assertXuiSuccess(inboundPayload);
+      const inbound = this.xuiObject(this.xuiObject(inboundPayload).obj || this.xuiObject(inboundPayload).data || inboundPayload);
+      inboundTag = String(inbound.tag || inboundTag);
+    }
     const outboundTag = this.socksOutboundTag(serviceNode.id);
 
     const xrayPayload = await client.getXrayConfig();
@@ -308,17 +318,23 @@ export class XuiService {
   async deleteManagedServiceNodeInbound(serviceNodeId: string) {
     const serviceNode = await this.prisma.serviceNode.findUnique({ where: { id: serviceNodeId }, include: { server: true } });
     if (!serviceNode?.inboundId) return { deleted: false, skipped: true };
+    const config = this.xuiObject(serviceNode.config) as ServiceNodeConfig;
 
     try {
       const client = await this.createAuthenticatedClient(serviceNode.server);
+      const remoteClientEmail = this.stringValue(config.remoteClientEmail);
+      const remoteClientCleanup = remoteClientEmail
+        ? await this.deleteRemoteClientWithClient(client, serviceNode.server.id, remoteClientEmail, false, { serviceNodeId, inboundId: serviceNode.inboundId, action: 'service-node-delete' }).catch((error) => ({ deleted: false, xuiEmail: remoteClientEmail, message: this.errorMessage(error) }))
+        : { skipped: true, reason: 'service node has no remote client email' };
       const beforeDelete = await this.remoteInboundExists(client, serviceNode.inboundId);
       if (!beforeDelete.exists) {
         await this.writeSyncLog(serviceNode.serverId, 'service-node-inbound-delete', 'success', `Inbound ${serviceNode.inboundId} already absent`, {
           serviceNodeId,
           inboundId: serviceNode.inboundId,
-          alreadyAbsent: true
+          alreadyAbsent: true,
+          remoteClientCleanup
         });
-        return { deleted: true, inboundId: serviceNode.inboundId, alreadyAbsent: true };
+        return { deleted: true, inboundId: serviceNode.inboundId, alreadyAbsent: true, remoteClientCleanup };
       }
       const response = await client.deleteInbound(serviceNode.inboundId);
       this.assertXuiSuccess(response);
@@ -326,10 +342,11 @@ export class XuiService {
       await this.writeSyncLog(serviceNode.serverId, 'service-node-inbound-delete', 'success', `Deleted inbound ${serviceNode.inboundId}`, {
         serviceNodeId,
         inboundId: serviceNode.inboundId,
+        remoteClientCleanup,
         verified,
         response: this.toJsonValue(response)
       });
-      return { deleted: true, inboundId: serviceNode.inboundId, verified, response };
+      return { deleted: true, inboundId: serviceNode.inboundId, remoteClientCleanup, verified, response };
     } catch (error) {
       if (this.isRemoteNotFound(error)) return { deleted: true, inboundId: serviceNode.inboundId, alreadyAbsent: true };
       await this.writeSyncLog(serviceNode.serverId, 'service-node-inbound-delete', 'failed', this.errorMessage(error), { serviceNodeId, inboundId: serviceNode.inboundId });
@@ -637,10 +654,7 @@ export class XuiService {
   private async deleteRemoteClient(server: XuiServerConfig & { id?: string | null }, xuiEmail: string, keepTraffic: boolean, detail: Record<string, unknown>) {
     try {
       const client = await this.createAuthenticatedClient(server);
-      const payload = await client.deleteClient(xuiEmail, keepTraffic);
-      this.assertXuiSuccess(payload);
-      await this.writeSyncLog(server.id || null, 'customer-node-delete', 'success', `Deleted ${xuiEmail}`, { ...detail, keepTraffic, response: this.toJsonValue(payload) });
-      return { deleted: true, xuiEmail, response: payload };
+      return await this.deleteRemoteClientWithClient(client, server.id || null, xuiEmail, keepTraffic, detail);
     } catch (error) {
       if (/not found|record not found|404/i.test(this.errorMessage(error))) {
         await this.writeSyncLog(server.id || null, 'customer-node-delete', 'success', `Remote client already absent: ${xuiEmail}`, { ...detail, xuiEmail, keepTraffic });
@@ -649,6 +663,13 @@ export class XuiService {
       await this.writeSyncLog(server.id || null, 'customer-node-delete', 'failed', this.errorMessage(error), { ...detail, xuiEmail, keepTraffic });
       throw new BadGatewayException(`删除 3x-ui 客户端失败：${this.errorMessage(error)}`);
     }
+  }
+
+  private async deleteRemoteClientWithClient(client: XuiClient, serverId: string | null | undefined, xuiEmail: string, keepTraffic: boolean, detail: Record<string, unknown>) {
+    const payload = await client.deleteClient(xuiEmail, keepTraffic);
+    this.assertXuiSuccess(payload);
+    await this.writeSyncLog(serverId || null, 'customer-node-delete', 'success', `Deleted ${xuiEmail}`, { ...detail, xuiEmail, keepTraffic, response: this.toJsonValue(payload) });
+    return { deleted: true, xuiEmail, response: payload };
   }
 
   private shouldDeleteRemoteClient(customerNode?: { lastSyncedAt: Date | null; config: Prisma.JsonValue | null } | null) {
@@ -761,10 +782,12 @@ export class XuiService {
     }
     if (security === 'reality') {
       const keys = await this.resolveRealityKeys(client);
-      const target = this.realityTarget(serverConfig);
-      const serverName = this.realityServerName(serverConfig, target);
+      const realityTarget = await this.resolveRealityTarget(client, serverConfig);
+      const target = realityTarget.target;
+      const serverName = realityTarget.serverName;
       const fingerprint = String(serverConfig.realityFingerprint || 'chrome').trim() || 'chrome';
       const spiderX = String(serverConfig.realitySpiderX || '/').trim() || '/';
+      const shortId = this.randomShortId();
       return {
         ...base,
         security: 'reality',
@@ -779,9 +802,12 @@ export class XuiService {
           minClient: '',
           maxClient: '',
           maxTimediff: 0,
-          alpn: ['h2', 'http/1.1'],
-          shortIds: [this.randomShortId()],
-          settings: { publicKey: keys.publicKey, fingerprint, serverName, spiderX }
+          alpn: ['h3', 'h2', 'http/1.1'],
+          shortIds: [shortId],
+          fingerprint,
+          serverName,
+          spiderX,
+          settings: { publicKey: keys.publicKey, fingerprint, serverName, spiderX, shortId }
         }
       };
     }
@@ -815,9 +841,68 @@ export class XuiService {
     return { privateKey, publicKey };
   }
 
+  private async resolveRealityTarget(client: XuiClient, serverConfig: Record<string, unknown>): Promise<RealityTargetInfo> {
+    const configuredTarget = String(serverConfig.realityTarget || '').trim();
+    if (configuredTarget) {
+      const target = this.normalizeRealityTarget(configuredTarget);
+      const scanned = await this.scanRealityTarget(client, target).catch(() => null);
+      return this.realityInfoFromScan(scanned, serverConfig, target) || this.realityInfoFromTarget(serverConfig, target);
+    }
+
+    const scanned = await this.scanRealityTargets(client).catch(() => null);
+    const discovered = this.bestRealityScanResult(scanned);
+    if (discovered) return this.realityInfoFromScan(discovered, serverConfig) || this.realityInfoFromTarget(serverConfig, DEFAULT_REALITY_TARGET);
+
+    return this.realityInfoFromTarget(serverConfig, DEFAULT_REALITY_TARGET);
+  }
+
+  private async scanRealityTarget(client: XuiClient, target: string) {
+    const payload = await client.scanRealityTarget(target);
+    this.assertXuiSuccess(payload);
+    return this.xuiObject(this.xuiObject(payload).obj || this.xuiObject(payload).data || payload);
+  }
+
+  private async scanRealityTargets(client: XuiClient) {
+    const payload = await client.scanRealityTargets();
+    this.assertXuiSuccess(payload);
+    return this.xuiArray(payload).map((item) => this.xuiObject(item));
+  }
+
+  private bestRealityScanResult(results: unknown) {
+    const candidates = Array.isArray(results) ? results.map((item) => this.xuiObject(item)) : [];
+    return candidates.find((item) => item.feasible === true && this.stringValue(item.target)) || candidates.find((item) => this.stringValue(item.target));
+  }
+
+  private realityInfoFromScan(scan: Record<string, unknown> | null | undefined, serverConfig: Record<string, unknown>, fallbackTarget?: string): RealityTargetInfo | null {
+    if (!scan) return null;
+    const targetValue = this.stringValue(scan.target) || fallbackTarget;
+    if (!targetValue) return null;
+    const target = this.normalizeRealityTarget(targetValue);
+    const serverName = this.realityServerNameFromScan(serverConfig, target, scan);
+    return { target, serverName, scan };
+  }
+
+  private realityInfoFromTarget(serverConfig: Record<string, unknown>, target: string): RealityTargetInfo {
+    const normalized = this.normalizeRealityTarget(target);
+    return { target: normalized, serverName: this.realityServerNameFromScan(serverConfig, normalized), scan: null };
+  }
+
+  private realityServerNameFromScan(serverConfig: Record<string, unknown>, target: string, scan?: Record<string, unknown>) {
+    const configured = String(serverConfig.realityServerName || '').trim();
+    if (configured) return configured;
+    const serverNames = Array.isArray(scan?.serverNames) ? scan.serverNames.map((item) => String(item).trim()).filter(Boolean) : [];
+    const scannedName = serverNames.find((item) => !item.startsWith('*.') && !this.isIpAddress(item)) || this.stringValue(scan?.host);
+    if (scannedName && !this.isIpAddress(scannedName)) return scannedName;
+    const host = this.hostFromTarget(target);
+    if (host && !this.isIpAddress(host)) return host;
+    throw new BadRequestException('Reality requires a domain SNI. Set Reality SNI or use a scan result with a domain.');
+  }
+
   private realityTarget(serverConfig: Record<string, unknown>) {
     const target = String(serverConfig.realityTarget || '').trim();
     if (target) return this.normalizeRealityTarget(target);
+    const defaultTarget = DEFAULT_REALITY_TARGET;
+    if (defaultTarget) return defaultTarget;
 
     const host = this.hostFromUrl(String(serverConfig.baseUrl || ''));
     if (host && !this.isIpAddress(host)) return `${host}:443`;
