@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { Activity, Clock3, RefreshCw, ShieldOff } from 'lucide-vue-next';
 import { api } from '../api';
 
 type CustomerResult = { total: number; items: Array<{ id: string; status: string }> };
@@ -104,11 +105,23 @@ async function syncTraffic() {
   }
 }
 
+function formatDate(value?: string | null) {
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未执行';
+}
+
 onMounted(loadDashboard);
 </script>
 
 <template>
-  <h1 class="page-title">概览</h1>
+  <div class="page-head">
+    <div class="page-head-main">
+      <h1 class="page-title">概览</h1>
+      <p>查看系统初始化状态、核心资源数量和后台自动任务。</p>
+    </div>
+    <div class="page-actions">
+      <el-button :loading="loading" @click="loadDashboard"><RefreshCw :size="15" />刷新</el-button>
+    </div>
+  </div>
   <el-alert v-if="error" class="page-alert" :title="error" type="error" show-icon :closable="false" />
 
   <div class="metric-grid" :class="{ loading }">
@@ -121,52 +134,72 @@ onMounted(loadDashboard);
   <div class="panel list-panel">
     <div class="panel-toolbar">
       <strong>初始化状态</strong>
-      <el-button size="small" :loading="loading" @click="loadDashboard">刷新</el-button>
     </div>
-    <el-descriptions :column="1" border>
-      <el-descriptions-item label="在线支付">{{ enabledPaymentChannels ? `已启用 ${enabledPaymentChannels} 个通道` : '未启用' }}</el-descriptions-item>
-      <el-descriptions-item label="自动停用过期节点">
-        <div class="job-row">
-          <el-switch
-            :model-value="jobSettings.disableExpiredEnabled"
-            :loading="jobSettingsSaving"
-            active-text="启用"
-            inactive-text="停用"
-            @change="(value: string | number | boolean) => saveJobSettings({ disableExpiredEnabled: Boolean(value) })"
-          />
-          <span class="muted-text">每 10 分钟执行一次</span>
-          <el-button size="small" type="primary" plain :loading="jobRunning" @click="disableExpiredNodes">立即执行</el-button>
-          <span v-if="lastDisableExpired" class="inline-note">上次：成功 {{ lastDisableExpired.success }}，失败 {{ lastDisableExpired.failed }}</span>
+    <div class="status-strip">
+      <div>
+        <span>在线支付</span>
+        <strong>{{ enabledPaymentChannels ? `已启用 ${enabledPaymentChannels} 个通道` : '未启用' }}</strong>
+      </div>
+      <div>
+        <span>连接服务器</span>
+        <strong>{{ enabledServers }}/{{ servers.length }} 可用</strong>
+      </div>
+      <div>
+        <span>路由节点</span>
+        <strong>{{ enabledNodes }}/{{ serviceNodes.length }} 启用</strong>
+      </div>
+    </div>
+  </div>
+
+  <div class="job-card-grid">
+    <div class="panel job-card">
+      <div class="job-card-head">
+        <div class="job-icon"><ShieldOff :size="20" /></div>
+        <div>
+          <strong>自动停用过期节点</strong>
+          <span>每 10 分钟检查一次，到期后同步停用远端。</span>
         </div>
-      </el-descriptions-item>
-      <el-descriptions-item label="远端流量同步任务">
-        <div class="job-row">
-          <el-switch
-            :model-value="jobSettings.trafficSyncEnabled"
-            :loading="jobSettingsSaving"
-            active-text="启用"
-            inactive-text="停用"
-            @change="(value: string | number | boolean) => saveJobSettings({ trafficSyncEnabled: Boolean(value) })"
-          />
-          <span class="muted-text">每 10 分钟读取远端用量，超限后停用</span>
-          <el-button size="small" type="primary" plain :loading="trafficJobRunning" @click="syncTraffic">立即执行</el-button>
-          <span v-if="lastTrafficSync" class="inline-note">上次：检查 {{ lastTrafficSync.checked }}，停用 {{ lastTrafficSync.disabled }}，失败 {{ lastTrafficSync.failed }}</span>
+        <el-switch
+          :model-value="jobSettings.disableExpiredEnabled"
+          :loading="jobSettingsSaving"
+          active-text="启用"
+          inactive-text="停用"
+          @change="(value: string | number | boolean) => saveJobSettings({ disableExpiredEnabled: Boolean(value) })"
+        />
+      </div>
+      <div class="job-card-body">
+        <div><span>最近执行</span><strong>{{ formatDate(lastDisableExpired?.checkedAt) }}</strong></div>
+        <div><span>成功</span><strong>{{ lastDisableExpired?.success ?? '-' }}</strong></div>
+        <div><span>失败</span><strong>{{ lastDisableExpired?.failed ?? '-' }}</strong></div>
+      </div>
+      <div class="job-card-actions">
+        <el-button type="primary" plain :loading="jobRunning" @click="disableExpiredNodes"><Clock3 :size="15" />立即执行</el-button>
+      </div>
+    </div>
+
+    <div class="panel job-card">
+      <div class="job-card-head">
+        <div class="job-icon"><Activity :size="20" /></div>
+        <div>
+          <strong>远端流量同步任务</strong>
+          <span>读取远端用量，超限后停用本地绑定和远端客户端。</span>
         </div>
-      </el-descriptions-item>
-    </el-descriptions>
+        <el-switch
+          :model-value="jobSettings.trafficSyncEnabled"
+          :loading="jobSettingsSaving"
+          active-text="启用"
+          inactive-text="停用"
+          @change="(value: string | number | boolean) => saveJobSettings({ trafficSyncEnabled: Boolean(value) })"
+        />
+      </div>
+      <div class="job-card-body">
+        <div><span>最近执行</span><strong>{{ formatDate(lastTrafficSync?.checkedAt) }}</strong></div>
+        <div><span>检查</span><strong>{{ lastTrafficSync?.checked ?? '-' }}</strong></div>
+        <div><span>停用</span><strong>{{ lastTrafficSync?.disabled ?? '-' }}</strong></div>
+      </div>
+      <div class="job-card-actions">
+        <el-button type="primary" plain :loading="trafficJobRunning" @click="syncTraffic"><Activity :size="15" />立即同步</el-button>
+      </div>
+    </div>
   </div>
 </template>
-
-<style scoped>
-.job-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-
-.inline-note {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-</style>
