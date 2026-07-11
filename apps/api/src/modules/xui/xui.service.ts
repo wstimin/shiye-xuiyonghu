@@ -418,9 +418,18 @@ export class XuiService {
               flow: this.clientFlowForServiceNode(serviceNode)
             }));
           this.assertXuiSuccess(payload);
+          if (serviceNode.enabled) {
+            await this.requireLinksForServiceNode(client, email, subId, {
+              serverId: serviceNode.serverId,
+              inboundId: serviceNode.inboundId,
+              serviceNodeName: serviceNode.name,
+              protocol: serviceNode.protocol,
+              encryption: String(config.encryption || 'none')
+            });
+          }
           results.push({ target: `service:${email}`, updated: true });
         } else {
-          results.push({ target: 'service-client', updated: false, skipped: true, message: 'remote service client not found' });
+          results.push({ target: 'service-client', updated: false, message: 'remote service client not found' });
         }
       } catch (error) {
         results.push({ target: 'service-client', updated: false, message: this.errorMessage(error) });

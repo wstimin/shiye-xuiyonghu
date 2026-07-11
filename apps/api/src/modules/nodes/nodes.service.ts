@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { customerNodeCreateSchema, serviceNodeUpsertSchema, socksNodeUpsertSchema, xuiServerUpsertSchema } from '@shiye/shared';
 import type { z } from 'zod';
 import { Prisma } from '@prisma/client';
@@ -267,12 +267,16 @@ export class NodesService {
         },
         include: { server: { select: { id: true, name: true, baseUrl: true, enabled: true } } }
       });
-      if (trafficLimitChanged && updated.inboundId) {
+      const remoteClientShouldSync = Boolean(updated.inboundId && (remoteInboundChanged || trafficLimitChanged));
+      if (remoteClientShouldSync) {
         await this.prisma.customerNode.updateMany({
           where: { serviceNodeId: id },
           data: { trafficLimitGb: updated.trafficLimitGb }
         });
-        await this.xui.syncServiceNodeTrafficLimit(id);
+        const syncResult = await this.xui.syncServiceNodeTrafficLimit(id);
+        if (!syncResult.synced) {
+          throw new BadGatewayException(`路由节点已保存，但远端 3x-ui 客户端同步未全部成功：成功 ${syncResult.updated}，跳过 ${syncResult.skipped}，失败 ${syncResult.failed}`);
+        }
       }
       return updated;
     } catch (error) {
