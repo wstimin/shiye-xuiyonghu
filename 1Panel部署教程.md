@@ -23,7 +23,7 @@ API 端口：3388
 API 前缀：https://你的域名/api/
 ```
 
-## 2. 创建数据库
+## 2. 选择部署方式和创建数据库
 
 如果你想不用面板手动上传源码，也可以在 1Panel 终端直接执行一键脚本。脚本会询问访问方式：选择跳过域名就是 `IP:3388` 访问；选择域名访问会继续输入域名，并可自动申请 HTTPS 证书。
 
@@ -33,6 +33,14 @@ API 前缀：https://你的域名/api/
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh)"
 ```
 
+一键脚本部署成功后，项目由 systemd 服务 `shiye-api` 管理，不需要再到 1Panel 里创建 Node.js 运行环境。服务器上可以随时打开管理菜单：
+
+```bash
+sudo shiye
+```
+
+菜单标题只显示“管理面板”，可执行安装/更新、查看状态、重启、日志、配置或取消域名、重新构建、数据库迁移、备份和卸载。
+
 也可以提前带入域名和 HTTPS 参数：
 
 ```bash
@@ -40,6 +48,8 @@ curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/instal
 ```
 
 继续使用 1Panel 面板部署时，按下面步骤操作。
+
+注意：一键脚本部署和下面的 1Panel 手动源码部署二选一即可。不要一边用一键脚本安装到 `/opt/shiye`，一边又在 1Panel 里用另一套运行环境启动同一项目，否则会出现两个启动方式，排查会很乱。
 
 进入 1Panel：
 
@@ -282,6 +292,12 @@ https://你的域名/payment/result?trade_no=订单号
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh)"
 ```
 
+也可以执行 `sudo shiye`，在“管理面板”菜单里选择：
+
+```text
+1. 安装/更新项目
+```
+
 只有手动上传完整源码时，才使用下面的源码更新方式。
 
 更新前备份：
@@ -304,7 +320,36 @@ npm prune --omit=dev
 
 然后在 1Panel 里重启 Node.js 运行环境。
 
-## 11. 常见问题
+## 11. 卸载项目
+
+如果使用一键脚本部署，推荐执行：
+
+```bash
+sudo shiye
+```
+
+然后选择：
+
+```text
+10. 卸载项目
+11. 卸载项目并删除数据库
+```
+
+也可以直接使用命令。默认卸载程序、systemd 服务和脚本创建的 Nginx 配置，保留数据库：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/uninstall.sh | sudo bash
+```
+
+彻底卸载并删除默认数据库 `shiye_management` 和默认数据库用户 `shiye`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/uninstall.sh | sudo env DELETE_DATABASE=yes bash
+```
+
+如果是 1Panel 手动源码部署，需要在 1Panel 里停止并删除 Node.js 运行环境、删除对应网站或反向代理配置，再按需删除 `/opt/shiye` 和数据库。删除数据库会清空用户、余额、订单、节点、卡密、支付配置和同步日志，操作前务必备份 `.env` 和 MySQL 数据。
+
+## 12. 常见问题
 
 ### 运行环境启动失败，提示找不到 package.json
 
@@ -338,7 +383,7 @@ prisma/
 - Nginx/OpenResty 是否正确把 `/api/` 代理到 API
 - 后台支付通道密钥和签名方式是否正确
 
-## 12. 备份建议
+## 13. 备份建议
 
 至少备份：
 
