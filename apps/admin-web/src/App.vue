@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref } from 'vue';
-import { ClipboardList, CreditCard, LayoutDashboard, LogOut, Network, ReceiptText, Router, Settings, ShieldCheck, Users, WalletCards } from 'lucide-vue-next';
+import { ArrowRight, ClipboardList, CreditCard, LayoutDashboard, LockKeyhole, LogOut, Network, ReceiptText, Router, Settings, ShieldCheck, UserRound, Users, WalletCards } from 'lucide-vue-next';
 import { api } from './api';
 
 type SessionUser = { role: string; username: string };
@@ -139,17 +139,30 @@ onUnmounted(() => {
   <div v-if="checking" class="boot-screen">正在检查登录状态</div>
 
   <div v-else-if="!user" class="login-screen">
-    <form class="login-panel" @submit.prevent="login">
-      <div class="login-brand">
-        <img v-if="branding.logoDataUrl" :src="branding.logoDataUrl" alt="Logo" />
-        <span v-else>{{ branding.brandName.slice(0, 1) }}</span>
+    <form class="login-panel refined-login" @submit.prevent="login">
+      <div class="login-brand-row">
+        <div class="login-brand">
+          <img v-if="branding.logoDataUrl" :src="branding.logoDataUrl" alt="Logo" />
+          <span v-else>{{ branding.brandName.slice(0, 1) }}</span>
+        </div>
+        <div>
+          <h1>{{ branding.brandName }}</h1>
+          <p>管理员登录</p>
+        </div>
       </div>
-      <h1>{{ branding.brandName }}</h1>
-      <p>管理员登录</p>
       <el-alert v-if="loginError" :title="loginError" type="error" show-icon :closable="false" />
-      <el-input v-model="loginForm.username" placeholder="账号" autocomplete="username" />
-      <el-input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password" show-password />
-      <el-button type="primary" native-type="submit" :loading="loggingIn" :disabled="!loginForm.username || !loginForm.password">登录</el-button>
+      <label class="login-field">
+        <UserRound :size="17" />
+        <input v-model="loginForm.username" placeholder="账号" autocomplete="username" />
+      </label>
+      <label class="login-field">
+        <LockKeyhole :size="17" />
+        <input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password" />
+      </label>
+      <button class="login-submit" :disabled="loggingIn || !loginForm.username || !loginForm.password">
+        <span>{{ loggingIn ? '登录中' : '登录' }}</span>
+        <ArrowRight :size="17" />
+      </button>
     </form>
   </div>
 

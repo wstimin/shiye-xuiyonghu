@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import QRCode from 'qrcode';
-import { Copy, QrCode, RefreshCw, X } from 'lucide-vue-next';
+import { Copy, QrCode, RefreshCw, Search, X } from 'lucide-vue-next';
 import { api } from '../api';
 
 type UserNode = {
@@ -21,8 +21,21 @@ const renewingId = ref('');
 const error = ref('');
 const message = ref('');
 const nodes = ref<UserNode[]>([]);
+const searchQuery = ref('');
 const monthsByNode = ref<Record<string, number>>({});
 const qrPreview = ref<{ title: string; image: string } | null>(null);
+
+const filteredNodes = computed(() => {
+  const keyword = searchQuery.value.trim().toLowerCase();
+  if (!keyword) return nodes.value;
+  return nodes.value.filter((node) => nodeSearchText(node).includes(keyword));
+});
+const activeCount = computed(() => nodes.value.filter((node) => node.status === 'active').length);
+const expiringCount = computed(() => nodes.value.filter((node) => {
+  if (!node.expireAt) return false;
+  const diff = new Date(node.expireAt).getTime() - Date.now();
+  return diff > 0 && diff <= 7 * 24 * 60 * 60 * 1000;
+}).length);
 
 async function loadNodes() {
   loading.value = true;
@@ -106,19 +119,41 @@ function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-';
 }
 
+function nodeSearchText(node: UserNode) {
+  return [
+    node.serviceNode.name,
+    node.serviceNode.server.name,
+    node.serviceNode.protocol,
+    node.status,
+    node.subId,
+    node.expireAt
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
 onMounted(loadNodes);
 </script>
 
 <template>
   <div class="page-heading">
-    <h1 class="page-title">我的节点</h1>
+    <div>
+      <h1 class="page-title">我的节点</h1>
+      <p class="page-subtitle">{{ activeCount }} 个可用，{{ expiringCount }} 个 7 天内到期</p>
+    </div>
     <button class="icon-action" :disabled="loading" @click="loadNodes"><RefreshCw :size="16" />刷新</button>
   </div>
   <div v-if="message" class="panel success-text">{{ message }}</div>
   <div v-if="error" class="panel error-text">{{ error }}</div>
 
-  <div v-else class="node-list" :class="{ loading }">
-    <article v-for="node in nodes" :key="node.id" class="panel node-card">
+  <div v-if="!error" class="panel node-filter-panel">
+    <label class="search-field">
+      <Search :size="16" />
+      <input v-model="searchQuery" placeholder="搜索节点、服务器、协议、状态" />
+    </label>
+    <span>显示 {{ filteredNodes.length }} / {{ nodes.length }}</span>
+  </div>
+
+  <div v-if="!error" class="node-list" :class="{ loading }">
+    <article v-for="node in filteredNodes" :key="node.id" class="panel node-card">
       <div class="node-card-head">
         <div>
           <h2>{{ node.serviceNode.name }}</h2>
@@ -150,7 +185,7 @@ onMounted(loadNodes);
         <button :disabled="renewingId === node.id">{{ renewingId === node.id ? '续费中' : '余额续费' }}</button>
       </form>
     </article>
-    <div v-if="!loading && !nodes.length" class="panel">暂无节点</div>
+    <div v-if="!loading && !filteredNodes.length" class="panel">暂无节点</div>
   </div>
 
   <div v-if="qrPreview" class="qr-modal" @click.self="closeQrCode">

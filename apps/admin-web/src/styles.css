@@ -2,11 +2,19 @@
 body { margin: 0; font-family: Inter, "Microsoft YaHei", Arial, sans-serif; background: #f5f7fb; color: #1f2937; }
 .boot-screen, .login-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .boot-screen { color: #64748b; }
-.login-panel { width: min(380px, 100%); display: grid; gap: 14px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 28px; box-shadow: 0 16px 40px rgb(15 23 42 / 8%); }
-.login-panel h1 { margin: 0; font-size: 24px; }
-.login-panel p { margin: 0 0 4px; color: #64748b; }
-.login-brand { width: 60px; height: 60px; display: grid; place-items: center; border: 1px solid #d7dde8; border-radius: 8px; background: #f8fafc; color: #2563eb; font-size: 24px; font-weight: 700; overflow: hidden; }
+.login-screen { background: #eef2f6; }
+.login-panel { width: min(420px, 100%); display: grid; gap: 16px; background: #fff; border: 1px solid #dbe3ec; border-radius: 8px; padding: 28px; box-shadow: 0 24px 70px rgb(15 23 42 / 10%); }
+.refined-login { align-content: start; }
+.login-brand-row { min-width: 0; display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 14px; margin-bottom: 4px; }
+.login-panel h1 { margin: 0; font-size: 23px; line-height: 1.2; overflow-wrap: anywhere; }
+.login-panel p { margin: 5px 0 0; color: #64748b; }
+.login-brand { width: 56px; height: 56px; display: grid; place-items: center; border: 1px solid #cfd9e5; border-radius: 8px; background: #f8fafc; color: #2563eb; font-size: 23px; font-weight: 800; overflow: hidden; }
 .login-brand img { width: 100%; height: 100%; object-fit: contain; }
+.login-field { min-width: 0; height: 44px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; padding: 0 12px; color: #64748b; }
+.login-field:focus-within { border-color: #2563eb; box-shadow: 0 0 0 3px rgb(37 99 235 / 12%); }
+.login-field input { width: 100%; min-width: 0; height: 40px; border: 0; outline: 0; background: transparent; color: #111827; }
+.login-submit { height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; font-weight: 700; }
+.login-submit:disabled { opacity: 0.55; cursor: not-allowed; }
 .shell { min-height: 100vh; }
 .sidebar { min-height: 100vh; display: flex; flex-direction: column; background: #111827; color: #fff; padding: 18px 12px; }
 .brand { min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 12px 14px; font-weight: 700; }

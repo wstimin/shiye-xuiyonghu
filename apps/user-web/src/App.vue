@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
-import { CircleUserRound, Home, LogOut, Network, ReceiptText } from 'lucide-vue-next';
+import { ArrowRight, CircleUserRound, Home, LockKeyhole, LogOut, Network, ReceiptText, UserRound } from 'lucide-vue-next';
 import { api } from './api';
 
 type SessionUser = { role: string; username: string };
@@ -105,17 +105,30 @@ onMounted(async () => {
   <div v-if="checking" class="boot-screen">正在检查登录状态</div>
 
   <div v-else-if="!user" class="login-screen">
-    <form class="login-panel" @submit.prevent="login">
-      <div class="login-brand">
-        <img v-if="branding.logoDataUrl" :src="branding.logoDataUrl" alt="Logo" />
-        <span v-else>{{ branding.brandName.slice(0, 1) }}</span>
+    <form class="login-panel refined-login" @submit.prevent="login">
+      <div class="login-brand-row">
+        <div class="login-brand">
+          <img v-if="branding.logoDataUrl" :src="branding.logoDataUrl" alt="Logo" />
+          <span v-else>{{ branding.brandName.slice(0, 1) }}</span>
+        </div>
+        <div>
+          <h1>{{ branding.brandName }}</h1>
+          <p>用户登录</p>
+        </div>
       </div>
-      <h1>{{ branding.brandName }}</h1>
-      <p>用户登录</p>
       <div v-if="loginError" class="error-text">{{ loginError }}</div>
-      <input v-model="loginForm.username" placeholder="账号" autocomplete="username" />
-      <input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password" />
-      <button :disabled="loggingIn || !loginForm.username || !loginForm.password">{{ loggingIn ? '登录中' : '登录' }}</button>
+      <label class="login-field">
+        <UserRound :size="17" />
+        <input v-model="loginForm.username" placeholder="账号" autocomplete="username" />
+      </label>
+      <label class="login-field">
+        <LockKeyhole :size="17" />
+        <input v-model="loginForm.password" type="password" placeholder="密码" autocomplete="current-password" />
+      </label>
+      <button class="login-submit" :disabled="loggingIn || !loginForm.username || !loginForm.password">
+        <span>{{ loggingIn ? '登录中' : '登录' }}</span>
+        <ArrowRight :size="17" />
+      </button>
     </form>
   </div>
 

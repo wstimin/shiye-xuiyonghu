@@ -31,6 +31,7 @@ const publicSettings = reactive({ cardPurchaseUrl: '' });
 const rechargeForm = reactive({ amount: 10, channelId: '', provider: 'alipay' as PaymentProvider });
 const lastOrder = ref<RechargeOrder | null>(null);
 const qrImage = ref('');
+const quickAmounts = [10, 30, 50, 100];
 
 const selectedChannel = computed(() => channels.value.find((item) => item.id === rechargeForm.channelId));
 const paymentMethods = computed<PaymentMethod[]>(() => ([
@@ -76,6 +77,10 @@ function selectPaymentMethod(channel?: PaymentChannel) {
   if (!channel) return;
   rechargeForm.channelId = channel.id;
   rechargeForm.provider = channel.provider;
+}
+
+function setAmount(amount: number) {
+  rechargeForm.amount = amount;
 }
 
 async function createRechargeOrder() {
@@ -140,7 +145,12 @@ onMounted(loadFinanceData);
 </script>
 
 <template>
-  <h1 class="page-title">财务</h1>
+  <div class="page-heading">
+    <div>
+      <h1 class="page-title">财务</h1>
+      <p class="page-subtitle">余额充值与卡密兑换</p>
+    </div>
+  </div>
   <p v-if="message" class="panel success-text">{{ message }}</p>
   <p v-if="error" class="panel error-text">{{ error }}</p>
 
@@ -162,6 +172,9 @@ onMounted(loadFinanceData);
           <span>{{ method.label }}</span>
           <small>{{ method.channel ? '已启用' : '未启用' }}</small>
         </button>
+      </div>
+      <div class="amount-shortcuts">
+        <button v-for="amount in quickAmounts" :key="amount" type="button" :class="{ active: rechargeForm.amount === amount }" @click="setAmount(amount)">{{ amount }} 元</button>
       </div>
       <form @submit.prevent="createRechargeOrder">
         <input v-model.number="rechargeForm.amount" type="number" min="0.01" step="0.01" placeholder="充值金额" />
