@@ -15,6 +15,10 @@ type ServiceNodeConfig = {
   remoteInboundTag?: string;
   remoteInboundRemark?: string;
   remoteInboundPort?: number;
+  remoteClientEmail?: string;
+  remoteClientUuid?: string;
+  remoteClientSubId?: string;
+  remoteClientLinks?: string[];
 };
 
 type XuiServerConfig = {
@@ -93,11 +97,13 @@ export class NodesService {
     await this.ensureServer(input.serverId);
     const remoteMode = input.remoteMode || 'create';
     let inboundId = input.inboundId || null;
-    let remoteCreated: { inboundId: number; port: number; tag: string; remark: string } | null = null;
+    let remoteCreated: { inboundId: number; port: number; tag: string; remark: string; remoteClientEmail?: string; remoteClientUuid?: string; remoteClientSubId?: string; links?: string[] } | null = null;
+    let remoteClient: { email?: string; uuid?: string; subId?: string } | null = null;
 
     if (remoteMode === 'bind') {
       if (!inboundId) throw new BadRequestException('绑定已有入站时必须填写入站 ID');
-      await this.xui.validateServiceNodeInbound(input.serverId, inboundId);
+      const validation = await this.xui.validateServiceNodeInbound(input.serverId, inboundId);
+      remoteClient = validation.remoteClient;
     } else {
       remoteCreated = await this.xui.createServiceNodeInbound({
         serverId: input.serverId,
@@ -109,6 +115,7 @@ export class NodesService {
         remark: input.remark || null
       });
       inboundId = remoteCreated.inboundId;
+      remoteClient = { email: remoteCreated.remoteClientEmail, uuid: remoteCreated.remoteClientUuid, subId: remoteCreated.remoteClientSubId };
     }
 
     const config = await this.serviceNodeConfig(input, null, remoteCreated ? {
@@ -116,8 +123,12 @@ export class NodesService {
       remoteManaged: true,
       remoteInboundTag: remoteCreated.tag,
       remoteInboundRemark: remoteCreated.remark,
-      remoteInboundPort: remoteCreated.port
-    } : { remoteMode, remoteManaged: false, remoteInboundPort: input.inboundPort });
+      remoteInboundPort: remoteCreated.port,
+      remoteClientEmail: remoteCreated.remoteClientEmail,
+      remoteClientUuid: remoteCreated.remoteClientUuid,
+      remoteClientSubId: remoteCreated.remoteClientSubId,
+      remoteClientLinks: remoteCreated.links
+    } : { remoteMode, remoteManaged: false, remoteInboundPort: input.inboundPort, remoteClientEmail: remoteClient?.email, remoteClientUuid: remoteClient?.uuid, remoteClientSubId: remoteClient?.subId });
 
     try {
       const node = await this.prisma.serviceNode.create({
@@ -150,7 +161,8 @@ export class NodesService {
     const previousConfig = jsonObject(current.config) as ServiceNodeConfig;
     const remoteMode = input.remoteMode || previousConfig.remoteMode || (current.inboundId ? 'bind' : 'create');
     let inboundId = input.inboundId === undefined ? current.inboundId : input.inboundId || null;
-    let remoteCreated: { inboundId: number; port: number; tag: string; remark: string } | null = null;
+    let remoteCreated: { inboundId: number; port: number; tag: string; remark: string; remoteClientEmail?: string; remoteClientUuid?: string; remoteClientSubId?: string; links?: string[] } | null = null;
+    let remoteClient: { email?: string; uuid?: string; subId?: string } | null = null;
     const nextName = input.name || current.name;
     const nextProtocol = input.protocol || current.protocol;
     const nextEncryption = input.encryption || previousConfig.encryption || 'none';
@@ -160,7 +172,10 @@ export class NodesService {
 
     if (remoteMode === 'bind') {
       if (!inboundId) throw new BadRequestException('绑定已有入站时必须填写入站 ID');
-      if (input.serverId || input.inboundId !== undefined) await this.xui.validateServiceNodeInbound(nextServerId, inboundId);
+      if (input.serverId || input.inboundId !== undefined || !previousConfig.remoteClientEmail) {
+        const validation = await this.xui.validateServiceNodeInbound(nextServerId, inboundId);
+        remoteClient = validation.remoteClient;
+      }
     } else if (!inboundId) {
       remoteCreated = await this.xui.createServiceNodeInbound({
         serverId: nextServerId,
@@ -172,6 +187,7 @@ export class NodesService {
         remark: nextRemark
       });
       inboundId = remoteCreated.inboundId;
+      remoteClient = { email: remoteCreated.remoteClientEmail, uuid: remoteCreated.remoteClientUuid, subId: remoteCreated.remoteClientSubId };
     }
 
     const remotePatch = remoteCreated ? {
@@ -179,11 +195,18 @@ export class NodesService {
       remoteManaged: true,
       remoteInboundTag: remoteCreated.tag,
       remoteInboundRemark: remoteCreated.remark,
-      remoteInboundPort: remoteCreated.port
+      remoteInboundPort: remoteCreated.port,
+      remoteClientEmail: remoteCreated.remoteClientEmail,
+      remoteClientUuid: remoteCreated.remoteClientUuid,
+      remoteClientSubId: remoteCreated.remoteClientSubId,
+      remoteClientLinks: remoteCreated.links
     } : {
       remoteMode,
       remoteManaged: remoteMode === 'create' ? Boolean(previousConfig.remoteManaged) : false,
-      remoteInboundPort: input.inboundPort === undefined ? previousConfig.remoteInboundPort : input.inboundPort
+      remoteInboundPort: input.inboundPort === undefined ? previousConfig.remoteInboundPort : input.inboundPort,
+      remoteClientEmail: remoteClient?.email || previousConfig.remoteClientEmail,
+      remoteClientUuid: remoteClient?.uuid || previousConfig.remoteClientUuid,
+      remoteClientSubId: remoteClient?.subId || previousConfig.remoteClientSubId
     };
     const config = await this.serviceNodeConfig(input, current.config, remotePatch);
     try {
@@ -232,7 +255,7 @@ export class NodesService {
 
   async deleteServiceNode(id: string) {
     const current = await this.ensureServiceNode(id);
-    const remoteClientCleanup = await this.xui.deleteServiceNodeClients(id).catch((error) => ({ failed: true, message: error instanceof Error ? error.message : String(error) }));
+    const remoteClientCleanup = { skipped: true, reason: 'clients belong to the service-node inbound and are removed with the inbound' };
     if (current.inboundId) await this.xui.syncServiceNodeRemoteConfig(id, { removeOnly: true }).catch(() => undefined);
     const remoteInboundCleanup = await this.xui.deleteManagedServiceNodeInbound(id).catch((error) => ({ failed: true, message: error instanceof Error ? error.message : String(error) }));
     const customerNodes = await this.prisma.customerNode.findMany({ where: { serviceNodeId: id }, select: { id: true } });
@@ -311,16 +334,22 @@ export class NodesService {
     if (!customer) throw new NotFoundException('Customer not found');
     if (!serviceNode) throw new NotFoundException('Service node not found');
 
-    const xuiEmail = input.xuiEmail || `${customer.loginUsername}-${serviceNode.id.slice(0, 6)}@shiye.local`;
+    const serviceConfig = jsonObject(serviceNode.config) as ServiceNodeConfig;
+    const xuiEmail = input.xuiEmail || stringValue(serviceConfig.remoteClientEmail);
+    const uuid = input.uuid || stringValue(serviceConfig.remoteClientUuid) || null;
+    const subId = stringValue(serviceConfig.remoteClientSubId);
+    const links = Array.isArray(serviceConfig.remoteClientLinks) ? serviceConfig.remoteClientLinks : [];
+    if (!xuiEmail) throw new BadRequestException('Service node is missing a remote 3x-ui client. Sync/import the service node first.');
     const node = await this.prisma.customerNode.create({
       data: {
         customerId,
         serviceNodeId: input.serviceNodeId,
         xuiEmail,
-        uuid: input.uuid || null,
+        uuid,
         expireAt: input.expireAt || null,
         trafficLimitGb: new Prisma.Decimal(input.trafficLimitGb ?? serviceNode.trafficLimitGb),
-        status: 'active'
+        status: 'active',
+        config: this.toJsonValue({ uuid, subId, links })
       },
       include: { serviceNode: { include: { server: true } }, customer: { select: { id: true, name: true, loginUsername: true } } }
     });
@@ -369,12 +398,9 @@ export class NodesService {
   }
 
   async unbindCustomerNode(customerId: string, customerNodeId: string) {
-    const node = await this.prisma.customerNode.findFirst({ where: { id: customerNodeId, customerId }, select: { id: true, lastSyncedAt: true, config: true } });
+    const node = await this.prisma.customerNode.findFirst({ where: { id: customerNodeId, customerId }, select: { id: true } });
     if (!node) throw new NotFoundException('Customer node not found');
-    let remoteCleanup: unknown = { skipped: true, reason: 'not synced to remote' };
-    if (node.lastSyncedAt || hasRemoteSyncConfig(node.config)) {
-      remoteCleanup = await this.xui.deleteCustomerNode(customerId, customerNodeId).catch((error) => ({ failed: true, message: error instanceof Error ? error.message : String(error) }));
-    }
+    const remoteCleanup: unknown = { skipped: true, reason: 'customer binding is local only; remote client belongs to the service node' };
     await this.prisma.customerNode.delete({ where: { id: customerNodeId } });
     return { deleted: true, id: customerNodeId, remoteCleanup };
   }
@@ -450,6 +476,10 @@ function maskSocksNode<T extends { passwordEnc: string | null }>(node: T) {
 function jsonObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' ? value.trim() || undefined : undefined;
 }
 
 function serverConfigFrom(value: unknown): XuiServerConfig {

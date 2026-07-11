@@ -33,6 +33,9 @@ type ServiceNodeConfig = {
   remoteInboundTag?: string;
   remoteInboundRemark?: string;
   remoteInboundPort?: number;
+  remoteClientEmail?: string;
+  remoteClientUuid?: string;
+  remoteClientSubId?: string;
 };
 
 type CreateServiceInboundInput = {
@@ -47,6 +50,21 @@ type CreateServiceInboundInput = {
 
 type UpdateServiceInboundInput = CreateServiceInboundInput & {
   inboundId: number;
+};
+
+type ClientLookup = {
+  email?: string;
+  uuid?: string;
+  subId?: string;
+  inboundId?: number;
+};
+
+type ClientMatch = {
+  exists: boolean;
+  raw: unknown;
+  email?: string;
+  uuid?: string;
+  subId?: string;
 };
 
 const SHIYE_ROUTE_MARK = 'shiye-service-node';
@@ -184,14 +202,41 @@ export class XuiService {
     }
 
     if (!inboundId) throw new BadGatewayException('3x-ui 已返回成功，但没有返回新入站 ID');
+    const remoteClientUuid = randomUUID();
+    const remoteClientSubId = this.subscriptionId(remoteClientUuid);
+    const remoteClientEmail = this.serviceClientEmail(input.name, inboundId);
+    const remoteClient = this.buildXuiClient({
+      uuid: remoteClientUuid,
+      subId: remoteClientSubId,
+      email: remoteClientEmail,
+      enabled: input.enabled,
+      expireAt: null,
+      trafficLimitGb: 0,
+      flow: this.clientFlowForProtocol(input.protocol, input.encryption || 'none')
+    });
+    let clientResponse: unknown;
+    try {
+      clientResponse = await client.addClient({ client: remoteClient, inboundIds: [inboundId] });
+      this.assertXuiSuccess(clientResponse);
+    } catch (error) {
+      await client.deleteInbound(inboundId).catch(() => undefined);
+      throw error;
+    }
+
+    const links = await this.linksForClient(client, remoteClientEmail, remoteClientSubId).catch(() => [] as string[]);
     await this.writeSyncLog(server.id, 'service-node-inbound-create', 'success', `Created inbound ${inboundId} for ${input.name}`, {
       inboundId,
       port,
       protocol: input.protocol,
       tag,
-      response: this.toJsonValue(response)
+      remoteClientEmail,
+      remoteClientUuid,
+      remoteClientSubId,
+      links,
+      response: this.toJsonValue(response),
+      clientResponse: this.toJsonValue(clientResponse)
     });
-    return { inboundId, port, tag, remark: String(payload.remark), response };
+    return { inboundId, port, tag, remark: String(payload.remark), remoteClientEmail, remoteClientUuid, remoteClientSubId, links, response };
   }
 
   async validateServiceNodeInbound(serverId: string, inboundId: number) {
@@ -200,7 +245,10 @@ export class XuiService {
     const client = await this.createAuthenticatedClient(server);
     const payload = await client.getInbound(inboundId);
     this.assertXuiSuccess(payload);
-    return { inboundId, valid: true };
+    const inbound = this.remoteInboundFromPayload(payload);
+    const remoteClient = this.firstInboundClientIdentity(inbound);
+    if (!remoteClient.email && !remoteClient.uuid && !remoteClient.subId) throw new BadRequestException('This 3x-ui inbound has no client. Create a client in 3x-ui first, or use automatic service-node creation.');
+    return { inboundId, valid: true, remoteClient };
   }
 
   async updateServiceNodeInbound(input: UpdateServiceInboundInput) {
@@ -322,6 +370,7 @@ export class XuiService {
 
         const inbound = this.xuiObject(rawInbound);
         const streamSettings = this.xuiObject(inbound.streamSettings);
+        const remoteClient = this.firstInboundClientIdentity(inbound);
         const name = this.remoteInboundName(inbound, inboundId);
         const protocol = String(inbound.protocol || 'vless').trim() || 'vless';
         if (!SHARE_LINK_PROTOCOLS.has(protocol)) {
@@ -343,6 +392,9 @@ export class XuiService {
           remoteInboundTag: String(inbound.tag || previousConfig.remoteInboundTag || ''),
           remoteInboundRemark: String(inbound.remark || previousConfig.remoteInboundRemark || ''),
           remoteInboundPort: port || previousConfig.remoteInboundPort || undefined,
+          remoteClientEmail: remoteClient.email || previousConfig.remoteClientEmail || undefined,
+          remoteClientUuid: remoteClient.uuid || previousConfig.remoteClientUuid || undefined,
+          remoteClientSubId: remoteClient.subId || previousConfig.remoteClientSubId || undefined,
           encryption: String(streamSettings.security || previousConfig.encryption || 'none'),
           importedFromRemote: existing ? Boolean(previousConfig.importedFromRemote) : true
         };
@@ -462,49 +514,71 @@ export class XuiService {
         throw new BadRequestException(`3x-ui 入站 ${inboundId} 不存在，可用 ID: ${knownIds}`);
       }
 
-      const uuid = customerNode.uuid || randomUUID();
-      const subId = this.subscriptionId(uuid);
-      const xuiClient = this.buildXuiClient({
-        uuid,
-        subId,
-        email: customerNode.xuiEmail,
-        enabled: targetStatus === 'active',
-        expireAt: options.expireAt === undefined ? customerNode.expireAt : options.expireAt,
-        trafficLimitGb: options.trafficLimitGb ?? customerNode.trafficLimitGb,
-        flow: this.clientFlowForServiceNode(customerNode.serviceNode)
-      });
+      const savedConfig = this.xuiObject(customerNode.config);
+      const serviceConfig = this.xuiObject(customerNode.serviceNode.config) as ServiceNodeConfig;
+      const remoteClientEmail = this.stringValue(serviceConfig.remoteClientEmail);
+      const remoteClientUuid = this.stringValue(serviceConfig.remoteClientUuid);
+      const remoteClientSubId = this.stringValue(serviceConfig.remoteClientSubId);
+      const savedUuid = typeof savedConfig.uuid === 'string' ? savedConfig.uuid : undefined;
+      const savedSubId = typeof savedConfig.subId === 'string' ? savedConfig.subId : undefined;
+      const lookupEmail = remoteClientEmail || customerNode.xuiEmail;
+      const existing = await this.findClient(client, {
+        email: lookupEmail,
+        uuid: remoteClientUuid || customerNode.uuid || savedUuid,
+        subId: remoteClientSubId || savedSubId,
+        inboundId
+      }, inbounds);
 
-      const existing = await this.findClient(client, customerNode.xuiEmail, inbounds);
       if (!existing.exists && options.createIfMissing === false) {
+        const uuid = customerNode.uuid || savedUuid || randomUUID();
+        const subId = savedSubId || this.subscriptionId(uuid);
         const syncedAt = new Date();
         const updatedNode = await this.prisma.customerNode.update({
           where: { id: customerNode.id },
-          data: { uuid, lastSyncedAt: syncedAt, config: this.toJsonValue({ ...(this.xuiObject(customerNode.config)), subId, links: [] }) },
+          data: { uuid, lastSyncedAt: syncedAt, config: this.toJsonValue({ ...savedConfig, uuid, subId, links: [] }) },
           include: { serviceNode: { include: { server: true } }, customer: { select: { id: true, name: true, loginUsername: true } } }
         });
         const detail = {
           customerId,
           customerNodeId,
           inboundId,
-          xuiEmail: customerNode.xuiEmail,
+          xuiEmail: lookupEmail,
           route: 'clients/get',
           action: 'already-absent',
           subId,
           links: [] as string[]
         };
-        await this.writeSyncLog(serverId, 'customer-node-sync', 'success', `Remote client already absent: ${customerNode.xuiEmail}`, detail);
+        await this.writeSyncLog(serverId, 'customer-node-sync', 'success', `Remote client already absent: ${lookupEmail}`, detail);
         return { synced: true, action: 'already-absent', route: 'clients/get', node: updatedNode, detail };
       }
-      const route = existing.exists ? 'clients/update' : 'clients/add';
-      const payload = existing.exists
-        ? await client.updateClient(customerNode.xuiEmail, { ...xuiClient, inboundIds: [inboundId] })
-        : await client.addClient({ client: xuiClient, inboundIds: [inboundId] });
+
+      if (!existing.exists) throw new BadRequestException('Remote 3x-ui client was not found for this service node. Customer binding sync will not create a new client. Sync/import the service node first or fill the existing remote client email/UUID.');
+
+      const allowCreate = false;
+      if (!existing.exists && !allowCreate) {
+        throw new BadRequestException('绑定已有 3x-ui 入站时未找到对应远端客户端，为避免重复创建，请填写已有客户端的远端标识/email 或 UUID 后再同步');
+      }
+
+      const uuid = existing.uuid || remoteClientUuid || customerNode.uuid || savedUuid || randomUUID();
+      const subId = existing.subId || remoteClientSubId || savedSubId || this.subscriptionId(uuid);
+      const xuiEmail = existing.email || remoteClientEmail || customerNode.xuiEmail;
+      const xuiClient = this.buildXuiClient({
+        uuid,
+        subId,
+        email: xuiEmail,
+        enabled: targetStatus === 'active',
+        expireAt: options.expireAt === undefined ? customerNode.expireAt : options.expireAt,
+        trafficLimitGb: options.trafficLimitGb ?? customerNode.trafficLimitGb,
+        flow: this.clientFlowForServiceNode(customerNode.serviceNode)
+      });
+      const route = 'clients/update';
+      const payload = await client.updateClient(existing.email || xuiEmail, { ...xuiClient, inboundIds: [inboundId] });
       this.assertXuiSuccess(payload);
-      const links = await this.linksForClient(client, customerNode.xuiEmail, subId).catch(() => [] as string[]);
+      const links = await this.linksForClient(client, xuiEmail, subId).catch(() => [] as string[]);
       const syncedAt = new Date();
       const updatedNode = await this.prisma.customerNode.update({
         where: { id: customerNode.id },
-        data: { uuid, lastSyncedAt: syncedAt, config: this.toJsonValue({ ...(this.xuiObject(customerNode.config)), subId, links }) },
+        data: { xuiEmail, uuid, lastSyncedAt: syncedAt, config: this.toJsonValue({ ...savedConfig, uuid, subId, links }) },
         include: { serviceNode: { include: { server: true } }, customer: { select: { id: true, name: true, loginUsername: true } } }
       });
 
@@ -512,15 +586,15 @@ export class XuiService {
         customerId,
         customerNodeId,
         inboundId,
-        xuiEmail: customerNode.xuiEmail,
+        xuiEmail,
         route,
-        action: existing.exists ? 'update' : 'add',
+        action: 'update',
         subId,
         links,
         response: this.toJsonValue(payload)
       };
-      await this.writeSyncLog(serverId, 'customer-node-sync', 'success', `Synced ${customerNode.xuiEmail}`, detail);
-      return { synced: true, action: existing.exists ? 'update' : 'add', route, node: updatedNode, detail };
+      await this.writeSyncLog(serverId, 'customer-node-sync', 'success', `Synced ${xuiEmail}`, detail);
+      return { synced: true, action: 'update', route, node: updatedNode, detail };
     } catch (error) {
       await this.writeSyncLog(serverId, 'customer-node-sync', 'failed', this.errorMessage(error), {
         customerId,
@@ -602,7 +676,11 @@ export class XuiService {
 
   private clientFlowForServiceNode(serviceNode: { protocol: string; config?: Prisma.JsonValue | null }) {
     const config = this.xuiObject(serviceNode.config);
-    return serviceNode.protocol === 'vless' && config.encryption === 'reality' ? 'xtls-rprx-vision' : '';
+    return this.clientFlowForProtocol(serviceNode.protocol, String(config.encryption || 'none'));
+  }
+
+  private clientFlowForProtocol(protocol: string, encryption: string) {
+    return protocol === 'vless' && encryption === 'reality' ? 'xtls-rprx-vision' : '';
   }
 
   private buildInboundPayload(input: CreateServiceInboundInput & { port: number; tag: string; streamSettings: Record<string, unknown> }) {
@@ -805,22 +883,33 @@ export class XuiService {
     return [];
   }
 
-  private async findClient(client: XuiClient, email: string, inbounds: unknown[]) {
-    try {
-      const payload = await client.getClient(email);
-      this.assertXuiSuccess(payload);
-      const object = this.xuiObject(payload);
-      const detailClient = this.xuiObject(object.client || object.clientStats || object.client_stat || object);
-      if (this.clientEmailOf(detailClient) === email || this.clientEmailOf(object) === email) return { exists: true, raw: payload };
-    } catch (error) {
-      if (!/not found|record not found|404/i.test(this.errorMessage(error))) throw error;
+  private async findClient(client: XuiClient, lookup: ClientLookup, inbounds: unknown[]): Promise<ClientMatch> {
+    if (lookup.email) {
+      try {
+        const payload = await client.getClient(lookup.email);
+        this.assertXuiSuccess(payload);
+        const found = this.clientIdentityFromPayload(payload);
+        if (this.clientMatches(found, lookup)) return { exists: true, raw: payload, ...found };
+      } catch (error) {
+        if (!this.isRemoteNotFound(error)) throw error;
+      }
     }
 
-    for (const inbound of inbounds) {
+    const sorted = [...inbounds].sort((a, b) => {
+      if (!lookup.inboundId) return 0;
+      const aTarget = this.inboundIdOf(a) === lookup.inboundId ? 1 : 0;
+      const bTarget = this.inboundIdOf(b) === lookup.inboundId ? 1 : 0;
+      return bTarget - aTarget;
+    });
+
+    for (const inbound of sorted) {
       const settings = this.parseMaybeJson(this.xuiObject(inbound).settings);
       const settingsObject = this.xuiObject(settings);
       const clients = Array.isArray(settingsObject.clients) ? settingsObject.clients : [];
-      if (clients.some((item: unknown) => this.clientEmailOf(item) === email)) return { exists: true, raw: inbound };
+      for (const item of clients) {
+        const found = this.clientIdentity(item);
+        if (this.clientMatches(found, lookup)) return { exists: true, raw: inbound, ...found };
+      }
     }
     return { exists: false, raw: null };
   }
@@ -981,6 +1070,64 @@ export class XuiService {
     return String(object.email || object.clientEmail || object.name || '').trim();
   }
 
+  private clientUuidOf(item: unknown) {
+    const object = this.xuiObject(item);
+    return String(object.id || object.uuid || object.password || '').trim();
+  }
+
+  private clientSubIdOf(item: unknown) {
+    const object = this.xuiObject(item);
+    return String(object.subId || object.sub_id || object.subscriptionId || '').trim();
+  }
+
+  private clientIdentity(item: unknown) {
+    return {
+      email: this.clientEmailOf(item) || undefined,
+      uuid: this.clientUuidOf(item) || undefined,
+      subId: this.clientSubIdOf(item) || undefined
+    };
+  }
+
+  private clientIdentityFromPayload(payload: unknown) {
+    const object = this.xuiObject(payload);
+    const candidates = [object.client, object.clientStats, object.client_stat, object.obj, object.data, object];
+    for (const candidate of candidates) {
+      const identity = this.clientIdentity(candidate);
+      if (identity.email || identity.uuid || identity.subId) return identity;
+    }
+    return {};
+  }
+
+  private firstInboundClientIdentity(inbound: unknown): { email?: string; uuid?: string; subId?: string } {
+    const settings = this.parseMaybeJson(this.xuiObject(inbound).settings);
+    const settingsObject = this.xuiObject(settings);
+    const clients = Array.isArray(settingsObject.clients) ? settingsObject.clients : [];
+    for (const item of clients) {
+      const identity = this.clientIdentity(item);
+      if (identity.email || identity.uuid || identity.subId) return identity;
+    }
+    return {};
+  }
+
+  private clientMatches(identity: { email?: string; uuid?: string; subId?: string }, lookup: ClientLookup) {
+    const email = this.normalizeIdentity(identity.email);
+    const uuid = this.normalizeIdentity(identity.uuid);
+    const subId = this.normalizeIdentity(identity.subId);
+    return Boolean(
+      (lookup.email && email && email === this.normalizeIdentity(lookup.email)) ||
+      (lookup.uuid && uuid && uuid === this.normalizeIdentity(lookup.uuid)) ||
+      (lookup.subId && subId && subId === this.normalizeIdentity(lookup.subId))
+    );
+  }
+
+  private normalizeIdentity(value?: string) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  private stringValue(value: unknown) {
+    return typeof value === 'string' ? value.trim() || undefined : undefined;
+  }
+
   private isShareLink(item: unknown): item is string {
     return typeof item === 'string' && /^(vless|vmess|trojan|ss|shadowsocks|hysteria|hy2):\/\//i.test(item.trim());
   }
@@ -998,6 +1145,11 @@ export class XuiService {
 
   private serviceInboundTag() {
     return `shiye-inbound-${randomUUID().replace(/-/g, '').slice(0, 18)}`;
+  }
+
+  private serviceClientEmail(name: string, inboundId: number) {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36) || 'node';
+    return `shiye-${slug}-${inboundId}@shiye.local`;
   }
 
   private pickInboundPort(usedPorts: Set<number>) {

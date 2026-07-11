@@ -400,7 +400,7 @@ onMounted(loadCustomers);
           <el-option v-for="node in serviceNodes" :key="node.id" :label="`${node.name} / ${node.server?.name || '-'}`" :value="node.id" />
         </el-select>
       </el-form-item>
-      <el-form-item label="远端标识"><el-input v-model="bindForm.xuiEmail" placeholder="可留空，系统会自动生成；点同步后写入 3x-ui" /></el-form-item>
+      <el-form-item label="远端标识"><el-input v-model="bindForm.xuiEmail" placeholder="可留空，默认使用服务节点已有远端客户端" /></el-form-item>
       <el-form-item label="到期时间">
         <div class="date-picker-stack">
           <el-date-picker v-model="bindForm.expireAt" type="datetime" placeholder="到期时间，可留空" value-format="YYYY-MM-DDTHH:mm:ss.SSSZ" style="width: 100%" />
@@ -427,7 +427,7 @@ onMounted(loadCustomers);
           <el-option v-for="node in serviceNodes" :key="node.id" :label="`${node.name} / ${node.server?.name || '-'}`" :value="node.id" />
         </el-select>
       </el-form-item>
-      <el-form-item label="远端标识"><el-input v-model="nodeEditForm.xuiEmail" placeholder="本地保存；点同步后写入 3x-ui" /></el-form-item>
+      <el-form-item label="远端标识"><el-input v-model="nodeEditForm.xuiEmail" placeholder="本地保存；同步时只更新已有 3x-ui 客户端" /></el-form-item>
       <el-form-item label="到期时间">
         <div class="date-picker-stack">
           <el-date-picker v-model="nodeEditForm.expireAt" type="datetime" placeholder="到期时间，可留空" value-format="YYYY-MM-DDTHH:mm:ss.SSSZ" style="width: 100%" />
