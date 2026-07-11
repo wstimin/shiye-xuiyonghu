@@ -198,12 +198,14 @@ onMounted(loadDashboard);
           <span>每 10 分钟自动检测；启动后立即检测一次。</span>
         </div>
         <div class="job-toggle">
-          <span>启用</span>
           <el-switch
             class="job-switch"
             :model-value="jobSettings.disableExpiredEnabled"
             :loading="jobSettingsSaving"
-            :width="40"
+            inline-prompt
+            active-text="启用"
+            inactive-text="停用"
+            :width="76"
             @change="toggleDisableExpired"
           />
         </div>
@@ -226,12 +228,14 @@ onMounted(loadDashboard);
           <span>每 10 分钟读取远端用量；启动后立即同步一次。</span>
         </div>
         <div class="job-toggle">
-          <span>启用</span>
           <el-switch
             class="job-switch"
             :model-value="jobSettings.trafficSyncEnabled"
             :loading="jobSettingsSaving"
-            :width="40"
+            inline-prompt
+            active-text="启用"
+            inactive-text="停用"
+            :width="76"
             @change="toggleTrafficSync"
           />
         </div>
