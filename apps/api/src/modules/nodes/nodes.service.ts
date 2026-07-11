@@ -112,7 +112,7 @@ export class NodesService {
         encryption: input.encryption,
         enabled: input.enabled,
         port: input.inboundPort,
-        remark: input.remark || null,
+        remark: input.name,
         trafficLimitGb: new Prisma.Decimal(input.trafficLimitGb)
       });
       inboundId = remoteCreated.inboundId;
@@ -170,6 +170,7 @@ export class NodesService {
     const nextEnabled = input.enabled ?? current.enabled;
     const nextRemotePort = input.inboundPort === undefined ? previousConfig.remoteInboundPort : input.inboundPort;
     const nextRemark = input.remark === undefined ? current.remark : input.remark || null;
+    const nextRemoteRemark = nextName;
     const trafficLimitChanged = input.trafficLimitGb !== undefined && Number(input.trafficLimitGb) !== Number(current.trafficLimitGb);
 
     if (remoteMode === 'bind') {
@@ -186,7 +187,7 @@ export class NodesService {
         encryption: nextEncryption,
         enabled: nextEnabled,
         port: input.inboundPort,
-        remark: nextRemark,
+        remark: nextRemoteRemark,
         trafficLimitGb: input.trafficLimitGb === undefined ? current.trafficLimitGb : new Prisma.Decimal(input.trafficLimitGb)
       });
       inboundId = remoteCreated.inboundId;
@@ -206,6 +207,7 @@ export class NodesService {
     } : {
       remoteMode,
       remoteManaged: remoteMode === 'create' ? Boolean(previousConfig.remoteManaged) : false,
+      remoteInboundRemark: remoteMode === 'create' ? nextRemoteRemark : previousConfig.remoteInboundRemark,
       remoteInboundPort: input.inboundPort === undefined ? previousConfig.remoteInboundPort : input.inboundPort,
       remoteClientEmail: remoteClient?.email || previousConfig.remoteClientEmail,
       remoteClientUuid: remoteClient?.uuid || previousConfig.remoteClientUuid,
@@ -220,7 +222,7 @@ export class NodesService {
         nextProtocol !== current.protocol ||
         nextEncryption !== (previousConfig.encryption || 'none') ||
         nextEnabled !== current.enabled ||
-        nextRemark !== current.remark ||
+        (remoteMode === 'create' && previousConfig.remoteInboundRemark !== nextRemoteRemark) ||
         (input.inboundPort !== undefined && nextRemotePort !== previousConfig.remoteInboundPort)
       );
       const remoteEnableOnlyChanged = Boolean(
@@ -233,6 +235,7 @@ export class NodesService {
         nextName === current.name &&
         nextProtocol === current.protocol &&
         nextEncryption === (previousConfig.encryption || 'none') &&
+        previousConfig.remoteInboundRemark === nextRemoteRemark &&
         nextRemark === current.remark &&
         (input.inboundPort === undefined || nextRemotePort === previousConfig.remoteInboundPort)
       );
@@ -248,7 +251,7 @@ export class NodesService {
             encryption: config.encryption || 'none',
             enabled: nextEnabled,
             port: nextRemotePort,
-            remark: nextRemark
+            remark: nextRemoteRemark
           });
         }
       }
