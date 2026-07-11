@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ClipboardList, CreditCard, LayoutDashboard, LogOut, Network, ReceiptText, Router, Settings, ShieldCheck, Users, WalletCards } from 'lucide-vue-next';
 import { api } from './api';
 
@@ -7,6 +7,7 @@ type SessionUser = { role: string; username: string };
 type Branding = { brandName: string; logoDataUrl: string };
 
 const fallbackBrandName = '十夜管理后台';
+const brandingUpdatedEvent = 'shiye:branding-updated';
 const navSections = [
   { label: '总览看板', items: [{ to: '/', label: '数据概览', icon: LayoutDashboard }] },
   {
@@ -93,7 +94,8 @@ async function logout() {
 function applyBrowserBranding(settings: Branding) {
   document.title = settings.brandName || fallbackBrandName;
   const icon = ensureFaviconElement();
-  if (settings.logoDataUrl) icon.href = settings.logoDataUrl;
+  icon.type = settings.logoDataUrl ? '' : 'image/svg+xml';
+  icon.href = settings.logoDataUrl || createTextFavicon(settings.brandName || fallbackBrandName);
 }
 
 function ensureFaviconElement() {
@@ -105,9 +107,31 @@ function ensureFaviconElement() {
   return link;
 }
 
+function createTextFavicon(name: string) {
+  const initial = Array.from(name.trim())[0] || '十';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0f172a"/><text x="50%" y="54%" text-anchor="middle" dominant-baseline="middle" font-size="32" font-family="Arial, sans-serif" font-weight="700" fill="#ffffff">${escapeSvg(initial)}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+function escapeSvg(value: string) {
+  return value.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char] || char);
+}
+
+function handleBrandingUpdated(event: Event) {
+  const next = (event as CustomEvent<Partial<Branding>>).detail || {};
+  branding.brandName = next.brandName || fallbackBrandName;
+  branding.logoDataUrl = next.logoDataUrl || '';
+  applyBrowserBranding(branding);
+}
+
 onMounted(async () => {
+  window.addEventListener(brandingUpdatedEvent, handleBrandingUpdated);
   await loadBranding();
   await loadMe();
+});
+
+onUnmounted(() => {
+  window.removeEventListener(brandingUpdatedEvent, handleBrandingUpdated);
 });
 </script>
 

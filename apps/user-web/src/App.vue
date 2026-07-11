@@ -72,7 +72,8 @@ async function logout() {
 function applyBrowserBranding(settings: Branding) {
   document.title = settings.brandName || fallbackBrandName;
   const icon = ensureFaviconElement();
-  if (settings.logoDataUrl) icon.href = settings.logoDataUrl;
+  icon.type = settings.logoDataUrl ? '' : 'image/svg+xml';
+  icon.href = settings.logoDataUrl || createTextFavicon(settings.brandName || fallbackBrandName);
 }
 
 function ensureFaviconElement() {
@@ -82,6 +83,16 @@ function ensureFaviconElement() {
   link.rel = 'icon';
   document.head.appendChild(link);
   return link;
+}
+
+function createTextFavicon(name: string) {
+  const initial = Array.from(name.trim())[0] || '十';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#0f172a"/><text x="50%" y="54%" text-anchor="middle" dominant-baseline="middle" font-size="32" font-family="Arial, sans-serif" font-weight="700" fill="#ffffff">${escapeSvg(initial)}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+function escapeSvg(value: string) {
+  return value.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char] || char);
 }
 
 onMounted(async () => {

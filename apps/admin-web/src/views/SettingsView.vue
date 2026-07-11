@@ -33,7 +33,9 @@ async function saveBrand() {
   savingBrand.value = true;
   error.value = '';
   try {
-    await api<AdminSettings>('/api/admin/settings', { method: 'PUT', body: { brand: brandForm } });
+    const settings = await api<AdminSettings>('/api/admin/settings', { method: 'PUT', body: { brand: brandForm } });
+    Object.assign(brandForm, settings.brand);
+    window.dispatchEvent(new CustomEvent('shiye:branding-updated', { detail: settings.brand }));
     ElMessage.success('品牌设置已保存');
   } catch (err) {
     error.value = err instanceof Error ? err.message : '保存失败';
