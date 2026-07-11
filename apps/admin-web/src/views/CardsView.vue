@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Copy, Trash2 } from 'lucide-vue-next';
+import { Copy, CreditCard, Edit3, Layers, Plus, RefreshCw, Trash2 } from 'lucide-vue-next';
 import { api } from '../api';
 
 type CardTemplate = { id: string; name: string; amount: string; quantity: number; prefix?: string | null; enabled: boolean; remark?: string | null };
@@ -28,6 +28,10 @@ const generateDialogVisible = ref(false);
 const generateForm = reactive({ templateId: '', name: defaultBatchName(), amount: 10, quantity: 10, prefix: '' });
 const templateForm = reactive({ name: '', amount: 10, quantity: 10, prefix: '', enabled: true, remark: '' });
 
+const templateCount = computed(() => templates.value.length);
+const batchCount = computed(() => batches.value.length);
+const unusedCardCount = computed(() => cards.value.filter((card) => card.status === 'unused').length);
+const usedCardCount = computed(() => cards.value.filter((card) => card.status === 'used').length);
 const enabledTemplates = computed(() => templates.value.filter((template) => template.enabled));
 const selectedTemplate = computed(() => templates.value.find((item) => item.id === generateForm.templateId));
 const templateGroups = computed<TemplateGroup[]>(() => {
@@ -261,6 +265,30 @@ function unusedFullCodesForGroup(group: TemplateGroup) {
   return group.batches.flatMap((batch) => unusedFullCodes(batch));
 }
 
+function cardsForGroup(group: TemplateGroup) {
+  return group.batches.flatMap((batch) => batch.cards || []);
+}
+
+function totalCountForGroup(group: TemplateGroup) {
+  return cardsForGroup(group).length;
+}
+
+function unusedCountForGroup(group: TemplateGroup) {
+  return cardsForGroup(group).filter((card) => card.status === 'unused').length;
+}
+
+function usedCountForGroup(group: TemplateGroup) {
+  return cardsForGroup(group).filter((card) => card.status === 'used').length;
+}
+
+function unusedCount(batch: CardBatch) {
+  return (batch.cards || []).filter((card) => card.status === 'unused').length;
+}
+
+function usedCount(batch: CardBatch) {
+  return (batch.cards || []).filter((card) => card.status === 'used').length;
+}
+
 function hasFullCodes(batch: CardBatch) {
   return fullCodes(batch).length > 0;
 }
@@ -290,16 +318,31 @@ onMounted(loadCards);
 </script>
 
 <template>
-  <h1 class="page-title">卡密管理</h1>
+  <div class="page-head">
+    <div class="page-head-main">
+      <h1 class="page-title">卡密管理</h1>
+      <p>按模板归档卡密批次，新生成的卡密会保留在对应批次里，刷新后仍可继续复制未使用卡密。</p>
+    </div>
+    <div class="page-actions">
+      <el-button type="primary" @click="openTemplateDialog"><Plus :size="16" />新增模板</el-button>
+      <el-button @click="openGenerateDialog()"><CreditCard :size="16" />生成卡密</el-button>
+      <el-button :loading="loading" @click="loadCards"><RefreshCw :size="16" />刷新</el-button>
+    </div>
+  </div>
   <el-alert v-if="error" class="page-alert" :title="error" type="error" show-icon :closable="false" />
+
+  <div class="metric-grid compact-metrics">
+    <div class="metric"><span>模板</span><strong>{{ templateCount }}</strong><small>可按模板继续追加批次</small></div>
+    <div class="metric"><span>批次</span><strong>{{ batchCount }}</strong><small>同模板批次集中展示</small></div>
+    <div class="metric"><span>未使用卡密</span><strong>{{ unusedCardCount }}</strong><small>可一键复制或清理</small></div>
+    <div class="metric"><span>已使用记录</span><strong>{{ usedCardCount }}</strong><small>可按批次或全局清除</small></div>
+  </div>
 
   <div class="panel list-panel">
     <div class="panel-toolbar">
       <strong>卡密业务</strong>
       <div class="table-toolbar-actions">
-        <el-button type="primary" @click="openTemplateDialog">新增模板</el-button>
-        <el-button @click="openGenerateDialog()">生成卡密</el-button>
-        <el-button :loading="loading" @click="loadCards">刷新</el-button>
+        <el-button type="danger" plain :loading="clearingUsed" @click="removeUsedCards"><Trash2 :size="15" />清除全部已使用记录</el-button>
       </div>
     </div>
     <el-collapse v-model="activePanels" class="admin-collapse">
@@ -316,10 +359,12 @@ onMounted(loadCards);
           <el-table-column prop="remark" label="备注" min-width="180" />
           <el-table-column label="操作" width="330" fixed="right">
             <template #default="{ row }: { row: CardTemplate }">
-              <el-button size="small" @click="openGenerateDialog(row)">生成</el-button>
-              <el-button size="small" @click="editTemplate(row)">编辑</el-button>
-              <el-button size="small" :loading="deletingUnusedTemplateIds.has(row.id)" @click="removeUnusedTemplateCards(row)"><Trash2 :size="14" />删除未使用</el-button>
-              <el-button size="small" type="danger" @click="removeTemplate(row)">删除模板</el-button>
+              <div class="row-actions">
+                <el-button size="small" type="primary" plain @click="openGenerateDialog(row)"><Plus :size="14" />生成</el-button>
+                <el-button size="small" @click="editTemplate(row)"><Edit3 :size="14" />编辑</el-button>
+                <el-button size="small" :loading="deletingUnusedTemplateIds.has(row.id)" @click="removeUnusedTemplateCards(row)"><Trash2 :size="14" />删除未使用</el-button>
+                <el-button size="small" type="danger" plain @click="removeTemplate(row)">删除模板</el-button>
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -327,7 +372,7 @@ onMounted(loadCards);
 
       <el-collapse-item name="batches">
         <template #title>
-          <div class="collapse-title"><strong>模板批次</strong><span>{{ batches.length }} 个批次</span></div>
+          <div class="collapse-title"><strong><Layers :size="16" />模板批次</strong><span>{{ batches.length }} 个批次</span></div>
         </template>
         <div v-if="templateGroups.length" class="generated-template-grid">
           <section v-for="group in templateGroups" :key="group.id" class="generated-template-card">
@@ -337,17 +382,22 @@ onMounted(loadCards);
                 <span>{{ group.amount }} 元 / 默认 {{ group.quantity }} 张 / {{ group.batches.length }} 个批次</span>
               </div>
               <div class="table-toolbar-actions">
-                <el-button v-if="group.template" size="small" type="primary" plain @click="openGenerateDialog(group.template)">继续生成</el-button>
+                <el-button v-if="group.template" size="small" type="primary" plain @click="openGenerateDialog(group.template)"><Plus :size="14" />继续生成</el-button>
                 <el-button size="small" type="success" plain :disabled="!unusedFullCodesForGroup(group).length" @click="copyCodes(unusedFullCodesForGroup(group), `已复制 ${group.name} 未使用卡密`)"><Copy :size="14" />复制未使用</el-button>
                 <el-button size="small" plain :disabled="!fullCodesForGroup(group).length" @click="copyCodes(fullCodesForGroup(group), `已复制 ${group.name} 全部可复制卡密`)"><Copy :size="14" />复制全部</el-button>
               </div>
+            </div>
+            <div class="card-count-strip">
+              <div><span>全部</span><strong>{{ totalCountForGroup(group) }}</strong></div>
+              <div><span>未使用</span><strong>{{ unusedCountForGroup(group) }}</strong></div>
+              <div><span>已使用</span><strong>{{ usedCountForGroup(group) }}</strong></div>
             </div>
             <div v-if="group.batches.length" class="generated-batch-stack">
               <section v-for="batch in group.batches" :key="batch.id" class="generated-batch-card">
                 <div class="generated-batch-head">
                   <div>
                     <strong>{{ batch.name }}</strong>
-                    <span>{{ batch.amount }} 元 / {{ batch._count?.cards ?? batch.quantity }} 张 / {{ formatDate(batch.createdAt) }}</span>
+                    <span>{{ batch.amount }} 元 / {{ batch._count?.cards ?? batch.quantity }} 张 / 未使用 {{ unusedCount(batch) }} / 已使用 {{ usedCount(batch) }} / {{ formatDate(batch.createdAt) }}</span>
                   </div>
                   <div class="table-toolbar-actions">
                     <el-button size="small" type="success" plain :disabled="!hasUnusedFullCodes(batch)" @click="copyCodes(unusedFullCodes(batch), '已复制本批未使用卡密')"><Copy :size="15" />复制未使用</el-button>
@@ -392,14 +442,19 @@ onMounted(loadCards);
     </el-collapse>
   </div>
 
-  <el-dialog v-model="templateDialogVisible" :title="editingTemplateId ? '编辑卡密模板' : '新增卡密模板'" width="640px" destroy-on-close>
-    <el-form :model="templateForm" label-width="82px" class="dialog-form-grid">
-      <el-form-item label="模板名称"><el-input v-model="templateForm.name" /></el-form-item>
-      <el-form-item label="金额"><el-input-number v-model="templateForm.amount" :min="0.01" :precision="2" style="width: 100%" /></el-form-item>
-      <el-form-item label="数量"><el-input-number v-model="templateForm.quantity" :min="1" :max="500" style="width: 100%" /></el-form-item>
-      <el-form-item label="前缀"><el-input v-model="templateForm.prefix" maxlength="16" placeholder="可留空" /></el-form-item>
-      <el-form-item label="启用"><el-switch v-model="templateForm.enabled" /></el-form-item>
-      <el-form-item label="备注"><el-input v-model="templateForm.remark" /></el-form-item>
+  <el-dialog v-model="templateDialogVisible" :title="editingTemplateId ? '编辑卡密模板' : '新增卡密模板'" width="680px" destroy-on-close>
+    <el-form :model="templateForm" label-width="82px" class="sectioned-dialog-form">
+      <section class="dialog-form-section">
+        <div class="dialog-section-head"><strong>模板规则</strong><span>模板只保存默认金额、数量和前缀，生成时会在该模板下追加新批次。</span></div>
+        <div class="dialog-form-grid">
+          <el-form-item label="模板名称"><el-input v-model="templateForm.name" /></el-form-item>
+          <el-form-item label="启用"><el-switch v-model="templateForm.enabled" /></el-form-item>
+          <el-form-item label="金额"><el-input-number v-model="templateForm.amount" :min="0.01" :precision="2" style="width: 100%" /></el-form-item>
+          <el-form-item label="数量"><el-input-number v-model="templateForm.quantity" :min="1" :max="500" style="width: 100%" /></el-form-item>
+          <el-form-item label="前缀"><el-input v-model="templateForm.prefix" maxlength="16" placeholder="可留空" /></el-form-item>
+          <el-form-item label="备注"><el-input v-model="templateForm.remark" /></el-form-item>
+        </div>
+      </section>
     </el-form>
     <template #footer>
       <el-button @click="templateDialogVisible = false">取消</el-button>
@@ -407,17 +462,22 @@ onMounted(loadCards);
     </template>
   </el-dialog>
 
-  <el-dialog v-model="generateDialogVisible" title="生成卡密" width="640px" destroy-on-close>
-    <el-form :model="generateForm" label-width="82px" class="dialog-form-grid">
-      <el-form-item label="选择模板">
-        <el-select v-model="generateForm.templateId" clearable style="width: 100%" @change="onTemplateChange" @clear="clearTemplateSelection">
-          <el-option v-for="item in enabledTemplates" :key="item.id" :label="`${item.name} / ${item.amount} 元 / ${item.quantity} 张`" :value="item.id" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="批次名称"><el-input v-model="generateForm.name" /></el-form-item>
-      <el-form-item label="金额"><el-input-number v-model="generateForm.amount" :disabled="Boolean(selectedTemplate)" :min="0.01" :precision="2" style="width: 100%" /></el-form-item>
-      <el-form-item label="数量"><el-input-number v-model="generateForm.quantity" :disabled="Boolean(selectedTemplate)" :min="1" :max="500" style="width: 100%" /></el-form-item>
-      <el-form-item label="前缀"><el-input v-model="generateForm.prefix" :disabled="Boolean(selectedTemplate)" maxlength="16" /></el-form-item>
+  <el-dialog v-model="generateDialogVisible" title="生成卡密" width="680px" destroy-on-close>
+    <el-form :model="generateForm" label-width="82px" class="sectioned-dialog-form">
+      <section class="dialog-form-section">
+        <div class="dialog-section-head"><strong>生成批次</strong><span>选择模板后会锁定金额、数量和前缀，生成结果会持久保存在模板批次里。</span></div>
+        <div class="dialog-form-grid">
+          <el-form-item label="选择模板" class="form-item-full">
+            <el-select v-model="generateForm.templateId" clearable style="width: 100%" @change="onTemplateChange" @clear="clearTemplateSelection">
+              <el-option v-for="item in enabledTemplates" :key="item.id" :label="`${item.name} / ${item.amount} 元 / ${item.quantity} 张`" :value="item.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="批次名称" class="form-item-full"><el-input v-model="generateForm.name" /></el-form-item>
+          <el-form-item label="金额"><el-input-number v-model="generateForm.amount" :disabled="Boolean(selectedTemplate)" :min="0.01" :precision="2" style="width: 100%" /></el-form-item>
+          <el-form-item label="数量"><el-input-number v-model="generateForm.quantity" :disabled="Boolean(selectedTemplate)" :min="1" :max="500" style="width: 100%" /></el-form-item>
+          <el-form-item label="前缀"><el-input v-model="generateForm.prefix" :disabled="Boolean(selectedTemplate)" maxlength="16" /></el-form-item>
+        </div>
+      </section>
     </el-form>
     <template #footer>
       <el-button @click="generateDialogVisible = false">取消</el-button>

@@ -133,8 +133,13 @@ body { margin: 0; font-family: Inter, "Microsoft YaHei", Arial, sans-serif; back
 .generated-template-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .generated-template-card { display: grid; gap: 12px; min-width: 0; border: 1px solid #d7dde8; border-radius: 8px; padding: 14px; background: #fbfdff; }
 .generated-template-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 32px; }
+.generated-template-head > div:first-child { min-width: 0; display: grid; gap: 3px; }
 .generated-template-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.generated-template-head span { flex: 0 0 auto; color: #64748b; font-size: 12px; }
+.generated-template-head span { color: #64748b; font-size: 12px; }
+.card-count-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.card-count-strip > div { min-height: 54px; display: grid; align-content: center; gap: 2px; padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+.card-count-strip span { color: #64748b; font-size: 12px; }
+.card-count-strip strong { color: #111827; font-size: 18px; line-height: 1; }
 .generated-batch-stack { display: grid; gap: 10px; }
 .batch-code-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .batch-empty-detail { padding: 12px; color: #64748b; font-size: 13px; background: #f8fafc; border: 1px dashed #d7dde8; border-radius: 6px; }
@@ -169,4 +174,4 @@ body { margin: 0; font-family: Inter, "Microsoft YaHei", Arial, sans-serif; back
 @media (max-width: 1200px) { .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .job-card-grid { grid-template-columns: 1fr; } }
 @media (max-width: 1100px) { .inline-form, .payment-form, .customer-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .bind-row-wide, .balance-row, .provider-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .node-grid, .settings-grid { grid-template-columns: 1fr; } .expanded-node-panel { padding-left: 12px; } }
-@media (max-width: 720px) { .page-head, .panel-toolbar { display: grid; justify-content: stretch; } .page-actions, .filter-bar { justify-content: flex-start; } .status-strip, .job-card-body, .inline-form, .bind-row, .bind-row-wide, .balance-row, .payment-form, .customer-form-grid, .dialog-form-grid, .payment-dialog-form, .generated-template-grid, .batch-code-stack { grid-template-columns: 1fr; } .form-item-full { grid-column: auto; } .job-card-head { grid-template-columns: 42px minmax(0, 1fr); } .job-card-head .el-switch { grid-column: 1 / -1; justify-self: start; } .customer-node-row { grid-template-columns: 1fr; } .node-actions, .node-action-group, .row-actions, .row-action-group { flex-wrap: wrap; justify-content: flex-start; } .generated-batch-head { display: grid; } }
+@media (max-width: 720px) { .page-head, .panel-toolbar { display: grid; justify-content: stretch; } .page-actions, .filter-bar { justify-content: flex-start; } .status-strip, .job-card-body, .inline-form, .bind-row, .bind-row-wide, .balance-row, .payment-form, .customer-form-grid, .dialog-form-grid, .payment-dialog-form, .generated-template-grid, .batch-code-stack, .card-count-strip { grid-template-columns: 1fr; } .form-item-full { grid-column: auto; } .job-card-head { grid-template-columns: 42px minmax(0, 1fr); } .job-card-head .el-switch { grid-column: 1 / -1; justify-self: start; } .customer-node-row { grid-template-columns: 1fr; } .node-actions, .node-action-group, .row-actions, .row-action-group { flex-wrap: wrap; justify-content: flex-start; } .generated-batch-head, .generated-template-head { display: grid; } }
