@@ -116,6 +116,8 @@ body { margin: 0; font-family: Inter, "Microsoft YaHei", Arial, sans-serif; back
 .balance-row { grid-template-columns: minmax(0, 1fr) 110px 150px minmax(160px, 1fr) 96px; }
 .bind-hint { margin-top: 10px; color: #64748b; font-size: 13px; }
 .date-picker-stack { display: grid; gap: 6px; min-width: 0; }
+.password-field-stack { display: grid; gap: 6px; min-width: 0; }
+.password-field-stack .el-button { justify-self: start; margin-left: 0; }
 .quick-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .quick-actions .el-button { margin-left: 0; }
 .customer-form-panel { margin-bottom: 12px; }

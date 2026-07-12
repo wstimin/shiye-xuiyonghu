@@ -4,10 +4,11 @@ import { balanceAdjustSchema, customerListQuerySchema, customerUpsertSchema } fr
 import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { EncryptionService } from '../security/encryption.service.js';
 
 @Injectable()
 export class CustomersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly encryption: EncryptionService) {}
 
   async list(query: z.infer<typeof customerListQuerySchema>) {
     const page = query.page;
@@ -50,6 +51,7 @@ export class CustomersService {
         name: input.name,
         loginUsername: input.loginUsername,
         loginPasswordHash,
+        loginPasswordEnc: this.encryption.encrypt(password),
         email: input.email || null,
         phone: input.phone || null,
         balance: new Prisma.Decimal(input.balance || 0),
@@ -63,12 +65,14 @@ export class CustomersService {
   async update(id: string, input: Partial<z.infer<typeof customerUpsertSchema>>) {
     await this.ensureExists(id);
     const loginPasswordHash = input.loginPassword ? await bcrypt.hash(input.loginPassword, 12) : undefined;
+    const loginPasswordEnc = input.loginPassword ? this.encryption.encrypt(input.loginPassword) : undefined;
     return this.prisma.customer.update({
       where: { id },
       data: {
         name: input.name,
         loginUsername: input.loginUsername,
         loginPasswordHash,
+        loginPasswordEnc,
         email: input.email === undefined ? undefined : input.email || null,
         phone: input.phone === undefined ? undefined : input.phone || null,
         balance: input.balance === undefined ? undefined : new Prisma.Decimal(input.balance),
@@ -77,6 +81,12 @@ export class CustomersService {
       },
       select: customerSelect
     });
+  }
+
+  async secrets(id: string) {
+    const customer = await this.prisma.customer.findUnique({ where: { id }, select: { id: true, loginPasswordEnc: true } });
+    if (!customer) throw new NotFoundException('用户不存在');
+    return { id: customer.id, loginPassword: this.encryption.decryptNullable(customer.loginPasswordEnc) || '' };
   }
 
   async remove(id: string) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Activity, Edit3, Link2, Plus, RefreshCw, RotateCcw, Search, ServerOff, Trash2, Unlink, Wallet } from 'lucide-vue-next';
+import { Activity, Edit3, KeyRound, Link2, Plus, RefreshCw, RotateCcw, Search, ServerOff, Trash2, Unlink, Wallet } from 'lucide-vue-next';
 import { api } from '../api';
 
 type CustomerNode = {
@@ -96,6 +96,7 @@ const trafficIds = ref<Set<string>>(new Set());
 const resettingTrafficIds = ref<Set<string>>(new Set());
 const deletingServiceNodeIds = ref<Set<string>>(new Set());
 const togglingCustomerIds = ref<Set<string>>(new Set());
+const readingPasswordIds = ref<Set<string>>(new Set());
 const customerTotal = ref(0);
 const customerFilters = reactive({ keyword: '', status: '', balanceMin: undefined as number | undefined, balanceMax: undefined as number | undefined });
 const customerPage = reactive({ page: 1, pageSize: 20 });
@@ -366,6 +367,28 @@ async function deleteBoundServiceNode(customer: Customer, node: CustomerNode) {
     const next = new Set(deletingServiceNodeIds.value);
     next.delete(node.id);
     deletingServiceNodeIds.value = next;
+  }
+}
+
+async function revealEditingCustomerPassword() {
+  if (!editingCustomerId.value) return;
+  readingPasswordIds.value = new Set(readingPasswordIds.value).add(editingCustomerId.value);
+  error.value = '';
+  try {
+    const result = await api<{ loginPassword: string }>(`/api/admin/customers/${editingCustomerId.value}/secrets`);
+    if (!result.loginPassword) {
+      await ElMessageBox.alert('该用户没有可读取的已保存密码。历史用户如果只保存了哈希，需要管理员重置密码，或用户下次自行修改密码后才可读取。', '读取密码', { type: 'warning' });
+      return;
+    }
+    customerForm.loginPassword = result.loginPassword;
+    ElMessage.success('已读取到登录密码输入框');
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '读取用户密码失败';
+    ElMessage.error(error.value);
+  } finally {
+    const next = new Set(readingPasswordIds.value);
+    next.delete(editingCustomerId.value);
+    readingPasswordIds.value = next;
   }
 }
 
@@ -740,7 +763,12 @@ onMounted(loadCustomers);
     <el-form :model="customerForm" label-width="82px" class="dialog-form-grid">
       <el-form-item label="名称"><el-input v-model="customerForm.name" /></el-form-item>
       <el-form-item label="登录账号"><el-input v-model="customerForm.loginUsername" /></el-form-item>
-      <el-form-item label="登录密码"><el-input v-model="customerForm.loginPassword" type="password" show-password :placeholder="editingCustomerId ? '留空不修改' : '可留空自动生成'" /></el-form-item>
+      <el-form-item label="登录密码">
+        <div class="password-field-stack">
+          <el-input v-model="customerForm.loginPassword" type="password" show-password :placeholder="editingCustomerId ? '留空不修改' : '可留空自动生成'" />
+          <el-button v-if="editingCustomerId" size="small" :loading="readingPasswordIds.has(editingCustomerId)" @click="revealEditingCustomerPassword"><KeyRound :size="15" />读取已保存密码</el-button>
+        </div>
+      </el-form-item>
       <el-form-item label="邮箱"><el-input v-model="customerForm.email" placeholder="可留空" /></el-form-item>
       <el-form-item label="手机"><el-input v-model="customerForm.phone" /></el-form-item>
       <el-form-item label="余额"><el-input-number v-model="customerForm.balance" :min="0" :precision="2" style="width: 100%" /></el-form-item>

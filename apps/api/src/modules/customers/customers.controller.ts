@@ -33,6 +33,13 @@ export class CustomersController {
     return this.customers.update(id, body);
   }
 
+  @Get('admin/customers/:id/secrets')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  secrets(@Param('id') id: string) {
+    return this.customers.secrets(id);
+  }
+
   @Delete('admin/customers/:id')
   @UseGuards(AuthGuard)
   @Roles('admin')

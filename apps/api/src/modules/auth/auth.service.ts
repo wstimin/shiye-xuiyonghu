@@ -4,13 +4,14 @@ import type { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import type { SessionUser } from '../../shared/auth.types.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { EncryptionService } from '../security/encryption.service.js';
 
 type LoginInput = z.infer<typeof loginSchema>;
 type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly encryption: EncryptionService) {}
 
   async login(input: LoginInput) {
     if (input.entry === 'admin') {
@@ -50,7 +51,7 @@ export class AuthService {
 
     await this.assertPassword(input.currentPassword, customer.loginPasswordHash);
     const loginPasswordHash = await bcrypt.hash(input.newPassword, 12);
-    await this.prisma.customer.update({ where: { id: customer.id }, data: { loginPasswordHash } });
+    await this.prisma.customer.update({ where: { id: customer.id }, data: { loginPasswordHash, loginPasswordEnc: this.encryption.encrypt(input.newPassword) } });
     return { message: '密码已修改，请重新登录' };
   }
 
