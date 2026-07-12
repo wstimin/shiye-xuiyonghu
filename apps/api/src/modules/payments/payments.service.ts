@@ -62,6 +62,21 @@ export class PaymentsService {
     return channels.map((channel) => this.maskChannel(channel));
   }
 
+  async channelSecrets(id: string) {
+    const channel = await this.prisma.paymentChannel.findUnique({ where: { id } });
+    if (!channel) throw new NotFoundException('支付通道不存在');
+    const config = this.configObject(channel.configEnc);
+    return {
+      id: channel.id,
+      provider: channel.provider,
+      key: channel.provider === 'epay' ? this.secret(config, 'key', 'merchantKey', 'merchantKeyEnc') : '',
+      token: channel.provider === 'bepusdt' ? this.secret(config, 'token', 'key', 'tokenEnc') : '',
+      privateKey: channel.provider === 'alipay' ? this.secret(config, 'privateKey', 'privateKeyEnc', 'merchantPem') : '',
+      publicKey: channel.provider === 'alipay' ? this.secret(config, 'publicKey', 'alipayPublicKey', 'alipayPublicKeyEnc') : '',
+      apiKey: channel.provider === 'wechat' ? this.secret(config, 'apiKey', 'apiV2Key', 'key') : ''
+    };
+  }
+
   async createChannel(input: PaymentChannelInput) {
     this.assertImplementedProvider(input.provider);
     const config = this.prepareChannelConfig(input.provider, input.config || {});

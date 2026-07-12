@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Activity, Edit3, Plus, RefreshCw, Search, Trash2, Users, Wifi } from 'lucide-vue-next';
+import { Activity, Edit3, Eye, Plus, RefreshCw, Search, Trash2, Users, Wifi } from 'lucide-vue-next';
 import { api } from '../api';
 
 type XuiServer = {
@@ -39,6 +39,7 @@ const syncingIds = ref<Set<string>>(new Set());
 const statusIds = ref<Set<string>>(new Set());
 const presenceIds = ref<Set<string>>(new Set());
 const togglingIds = ref<Set<string>>(new Set());
+const revealingSecrets = ref(false);
 const error = ref('');
 const searchQuery = ref('');
 const editingId = ref('');
@@ -253,6 +254,23 @@ function editServer(server: XuiServer) {
   dialogVisible.value = true;
 }
 
+async function revealServerSecrets() {
+  if (!editingId.value) return;
+  revealingSecrets.value = true;
+  error.value = '';
+  try {
+    const secrets = await api<{ password: string; token: string }>(`/api/admin/xui-servers/${editingId.value}/secrets`);
+    form.password = secrets.password || '';
+    form.token = secrets.token || '';
+    ElMessage.success('已读取保存的访问凭据');
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '读取保存凭据失败';
+    ElMessage.error(error.value);
+  } finally {
+    revealingSecrets.value = false;
+  }
+}
+
 async function removeServer(server: XuiServer) {
   await ElMessageBox.confirm(`确认删除面板连接“${server.name}”？有关联路由节点时请先处理节点。`, '删除确认', { type: 'warning' });
   await api(`/api/admin/xui-servers/${server.id}`, { method: 'DELETE' });
@@ -438,6 +456,7 @@ onMounted(loadServers);
           <el-form-item label="账号"><el-input v-model="form.username" /></el-form-item>
           <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password placeholder="编辑时留空不修改" /></el-form-item>
           <el-form-item label="API Token" class="form-item-full"><el-input v-model="form.token" type="password" show-password placeholder="编辑时留空不修改" /></el-form-item>
+          <el-form-item v-if="editingId" label="已保存" class="form-item-full"><el-button :loading="revealingSecrets" @click="revealServerSecrets"><Eye :size="15" />读取已保存密码/Token</el-button></el-form-item>
         </div>
       </section>
 

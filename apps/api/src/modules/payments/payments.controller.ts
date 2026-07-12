@@ -25,6 +25,13 @@ export class PaymentsController {
     return this.payments.adminChannels();
   }
 
+  @Get('admin/payment-channels/:id/secrets')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  channelSecrets(@Param('id') id: string) {
+    return this.payments.channelSecrets(id);
+  }
+
   @Post('admin/payment-channels')
   @UseGuards(AuthGuard)
   @Roles('admin')

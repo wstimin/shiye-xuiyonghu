@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Banknote, CircleDollarSign, Landmark, QrCode } from 'lucide-vue-next';
+import { Banknote, CircleDollarSign, Eye, Landmark, QrCode } from 'lucide-vue-next';
 import { api } from '../api';
 
 type PaymentProvider = 'alipay' | 'wechat' | 'epay' | 'bepusdt';
@@ -19,6 +19,7 @@ type PaymentChannel = {
   hasApiKey?: boolean;
   notifyUrl?: string;
 };
+type PaymentChannelSecrets = { key: string; token: string; privateKey: string; publicKey: string; apiKey: string };
 
 const providerOptions = [
   { label: '支付宝', value: 'alipay' },
@@ -50,6 +51,7 @@ const providerCards = [
 
 const loading = ref(false);
 const savingChannel = ref(false);
+const revealingChannelSecrets = ref(false);
 const togglingIds = ref<Set<string>>(new Set());
 const error = ref('');
 const channels = ref<PaymentChannel[]>([]);
@@ -194,6 +196,28 @@ function editChannel(channel: PaymentChannel) {
   channelDialogVisible.value = true;
 }
 
+async function revealChannelSecrets() {
+  if (!editingChannelId.value) return;
+  revealingChannelSecrets.value = true;
+  error.value = '';
+  try {
+    const secrets = await api<PaymentChannelSecrets>(`/api/admin/payment-channels/${editingChannelId.value}/secrets`);
+    if (channelForm.provider === 'epay') channelForm.key = secrets.key || '';
+    if (channelForm.provider === 'bepusdt') channelForm.token = secrets.token || '';
+    if (channelForm.provider === 'alipay') {
+      channelForm.privateKey = secrets.privateKey || '';
+      channelForm.publicKey = secrets.publicKey || '';
+    }
+    if (channelForm.provider === 'wechat') channelForm.apiKey = secrets.apiKey || '';
+    ElMessage.success(hasAnySecret(secrets) ? '已读取保存的支付密钥' : '该支付方式没有保存密钥');
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '读取保存密钥失败';
+    ElMessage.error(error.value);
+  } finally {
+    revealingChannelSecrets.value = false;
+  }
+}
+
 async function removeChannel(channel: PaymentChannel) {
   await ElMessageBox.confirm(`确认删除支付方式“${channel.name}”？`, '删除确认', { type: 'warning' });
   await api(`/api/admin/payment-channels/${channel.id}`, { method: 'DELETE' });
@@ -270,6 +294,10 @@ function secretState(channel: PaymentChannel) {
   if (channel.provider === 'bepusdt') return channel.hasToken ? '已配置' : '未配置';
   if (channel.provider === 'alipay') return channel.hasPrivateKey && channel.hasPublicKey ? '已配置' : '未配置';
   return channel.hasApiKey ? '已配置' : '未配置';
+}
+
+function hasAnySecret(secrets: PaymentChannelSecrets) {
+  return Boolean(secrets.key || secrets.token || secrets.privateKey || secrets.publicKey || secrets.apiKey);
 }
 
 onMounted(loadChannels);
@@ -360,6 +388,7 @@ onMounted(loadChannels);
         <el-input v-else-if="channelForm.provider === 'bepusdt'" v-model="channelForm.token" type="password" show-password placeholder="编辑时留空表示不修改已保存 Token" />
         <el-input v-else v-model="channelForm.apiKey" type="password" show-password placeholder="编辑时留空表示不修改已保存 V2 API 密钥" />
       </el-form-item>
+      <el-form-item v-if="editingChannelId" label="已保存密钥"><el-button :loading="revealingChannelSecrets" @click="revealChannelSecrets"><Eye :size="15" />读取已保存密钥</el-button></el-form-item>
       <el-form-item label="系统回调"><el-input :model-value="callbackUrl" readonly /></el-form-item>
       <el-form-item label="自定义回调"><el-input v-model="channelForm.notifyUrl" placeholder="通常留空，系统使用当前域名生成" /></el-form-item>
       <el-form-item label="返回地址"><el-input v-model="channelForm.returnUrl" placeholder="通常留空，系统使用用户支付结果页" /></el-form-item>

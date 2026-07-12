@@ -42,6 +42,16 @@ export class NodesService {
     return servers.map(maskXuiServer);
   }
 
+  async getServerSecrets(id: string) {
+    const server = await this.prisma.xuiServer.findUnique({ where: { id }, select: { id: true, passwordEnc: true, tokenEnc: true } });
+    if (!server) throw new NotFoundException('3x-ui server not found');
+    return {
+      id: server.id,
+      password: this.encryption.decryptNullable(server.passwordEnc) || '',
+      token: this.encryption.decryptNullable(server.tokenEnc) || ''
+    };
+  }
+
   async createServer(input: z.infer<typeof xuiServerUpsertSchema>) {
     const server = await this.prisma.xuiServer.create({
       data: {
@@ -328,6 +338,12 @@ export class NodesService {
   async listSocksNodes() {
     const nodes = await this.prisma.socksNode.findMany({ orderBy: { createdAt: 'desc' } });
     return nodes.map(maskSocksNode);
+  }
+
+  async getSocksNodeSecrets(id: string) {
+    const node = await this.prisma.socksNode.findUnique({ where: { id }, select: { id: true, passwordEnc: true } });
+    if (!node) throw new NotFoundException('Socks node not found');
+    return { id: node.id, password: this.encryption.decryptNullable(node.passwordEnc) || '' };
   }
 
   async createSocksNode(input: z.infer<typeof socksNodeUpsertSchema>) {

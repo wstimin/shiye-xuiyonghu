@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Edit3, Plus, RefreshCw, Search, Trash2 } from 'lucide-vue-next';
+import { Edit3, Eye, Plus, RefreshCw, Search, Trash2 } from 'lucide-vue-next';
 import { api } from '../api';
 
 type SocksNode = {
@@ -26,6 +26,7 @@ const servers = ref<XuiServer[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 const syncingRemote = ref(false);
+const revealingSecret = ref(false);
 const togglingIds = ref<Set<string>>(new Set());
 const error = ref('');
 const searchQuery = ref('');
@@ -121,6 +122,22 @@ function editNode(node: SocksNode) {
     remark: node.remark || ''
   });
   dialogVisible.value = true;
+}
+
+async function revealNodeSecret() {
+  if (!editingId.value) return;
+  revealingSecret.value = true;
+  error.value = '';
+  try {
+    const secrets = await api<{ password: string }>(`/api/admin/socks-nodes/${editingId.value}/secrets`);
+    form.password = secrets.password || '';
+    ElMessage.success(secrets.password ? '已读取保存的出站密码' : '该出站节点没有保存密码');
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '读取保存密码失败';
+    ElMessage.error(error.value);
+  } finally {
+    revealingSecret.value = false;
+  }
 }
 
 async function removeNode(node: SocksNode) {
@@ -267,6 +284,7 @@ onMounted(loadNodes);
         <div class="dialog-form-grid">
           <el-form-item label="账号"><el-input v-model="form.username" /></el-form-item>
           <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password placeholder="编辑时留空不修改" /></el-form-item>
+          <el-form-item v-if="editingId" label="已保存" class="form-item-full"><el-button :loading="revealingSecret" @click="revealNodeSecret"><Eye :size="15" />读取已保存密码</el-button></el-form-item>
           <el-form-item label="备注" class="form-item-full"><el-input v-model="form.remark" /></el-form-item>
         </div>
       </section>

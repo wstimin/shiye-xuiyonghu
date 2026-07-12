@@ -17,6 +17,11 @@ export class NodesController {
   @Roles('admin')
   servers() { return this.nodes.listServers(); }
 
+  @Get('admin/xui-servers/:id/secrets')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  serverSecrets(@Param('id') id: string) { return this.nodes.getServerSecrets(id); }
+
   @Post('admin/xui-servers')
   @UseGuards(AuthGuard)
   @Roles('admin')
@@ -61,6 +66,11 @@ export class NodesController {
   @UseGuards(AuthGuard)
   @Roles('admin')
   socksNodes() { return this.nodes.listSocksNodes(); }
+
+  @Get('admin/socks-nodes/:id/secrets')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  socksNodeSecrets(@Param('id') id: string) { return this.nodes.getSocksNodeSecrets(id); }
 
   @Post('admin/socks-nodes')
   @UseGuards(AuthGuard)
