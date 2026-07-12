@@ -706,6 +706,95 @@ set_env_value() {
   fi
 }
 
+detect_pkg_manager() {
+  if command -v apt >/dev/null 2>&1; then
+    PKG_MANAGER="apt"
+  elif command -v dnf >/dev/null 2>&1; then
+    PKG_MANAGER="dnf"
+  elif command -v yum >/dev/null 2>&1; then
+    PKG_MANAGER="yum"
+  else
+    die "Unsupported system: apt, dnf or yum is required"
+  fi
+}
+
+install_package() {
+  detect_pkg_manager
+  case "\${PKG_MANAGER}" in
+    apt) DEBIAN_FRONTEND=noninteractive apt install -y "\$@" ;;
+    dnf) dnf install -y "\$@" ;;
+    yum) yum install -y "\$@" ;;
+  esac
+}
+
+validate_domain() {
+  domain="\$1"
+  [ -n "\${domain}" ] || die "Domain is required"
+  echo "\${domain}" | grep -Eq '^[A-Za-z0-9.-]+$' || die "Domain can only contain letters, numbers, dots and hyphens"
+  echo "\${domain}" | grep -Eq '\.' || die "Domain must be a valid domain name, for example panel.example.com"
+}
+
+install_nginx_package() {
+  if ! command -v nginx >/dev/null 2>&1; then install_package nginx; fi
+  systemctl enable --now nginx >/dev/null 2>&1 || true
+}
+
+write_nginx_config() {
+  domain="\$1"
+  port="\$2"
+  validate_domain "\${domain}"
+  install_nginx_package
+  nginx_conf="/etc/nginx/conf.d/\${APP_NAME}.conf"
+  if [ -d /etc/nginx/sites-available ] && [ -d /etc/nginx/sites-enabled ]; then
+    nginx_conf="/etc/nginx/sites-available/\${APP_NAME}.conf"
+  fi
+
+  cat > "\${nginx_conf}" <<NGINX_MENU
+server {
+  listen 80;
+  server_name \${domain};
+
+  location / {
+    proxy_pass http://127.0.0.1:\${port};
+    proxy_http_version 1.1;
+    proxy_set_header Host \\\$host;
+    proxy_set_header X-Real-IP \\\$remote_addr;
+    proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \\\$scheme;
+    proxy_set_header Upgrade \\\$http_upgrade;
+    proxy_set_header Connection "upgrade";
+  }
+}
+NGINX_MENU
+
+  if [ -d /etc/nginx/sites-enabled ]; then
+    ln -sfn "\${nginx_conf}" "/etc/nginx/sites-enabled/\${APP_NAME}.conf"
+  fi
+
+  nginx -t
+  systemctl reload nginx
+}
+
+install_certbot() {
+  if command -v certbot >/dev/null 2>&1; then return; fi
+  detect_pkg_manager
+  case "\${PKG_MANAGER}" in
+    apt) DEBIAN_FRONTEND=noninteractive apt install -y certbot python3-certbot-nginx ;;
+    dnf|yum) install_package epel-release || true; install_package certbot python3-certbot-nginx || true ;;
+  esac
+}
+
+request_certificate() {
+  domain="\$1"
+  email="\$2"
+  validate_domain "\${domain}"
+  install_certbot
+  email_args=(--register-unsafely-without-email)
+  if [ -n "\${email}" ]; then email_args=(--email "\${email}"); fi
+  certbot --nginx -d "\${domain}" --non-interactive --agree-tos "\${email_args[@]}" --redirect
+  systemctl reload nginx
+}
+
 run_remote_install() {
   env_args=(APP_NAME="\${APP_NAME}" APP_DIR="\${APP_DIR}" PORT="\${PORT}" DEFAULT_REPO_URL="\${DEFAULT_REPO_URL}" PACKAGE_URL="\${PACKAGE_URL}" INSTALL_SOURCE="\${INSTALL_SOURCE}")
   if [ "\$#" -gt 0 ]; then env_args+=("\$@"); fi
@@ -735,9 +824,18 @@ configure_domain() {
     email="\$(prompt_required "Certbot 邮箱")"
   fi
 
-  args=(DOMAIN="\${domain}" ENABLE_NGINX=yes ENABLE_HTTPS="\${https}")
-  if [ -n "\${email}" ]; then args+=(CERTBOT_EMAIL="\${email}"); fi
-  run_remote_install "\${args[@]}"
+  configured_port="\$(get_env_value PORT || true)"
+  configured_port="\${configured_port:-\${PORT}}"
+  write_nginx_config "\${domain}" "\${configured_port}"
+  if [ "\${https}" = "yes" ]; then
+    request_certificate "\${domain}" "\${email}"
+    public_url="https://\${domain}"
+  else
+    public_url="http://\${domain}"
+  fi
+  set_env_value PUBLIC_WEB_URL "\${public_url}"
+  systemctl restart "\${APP_NAME}"
+  echo "Domain access configured: \${public_url}/"
 }
 
 remove_domain_access() {
