@@ -1,6 +1,8 @@
-# 视野 3x-ui 用户管理系统 1Panel 部署教程
+# 十夜 3x-ui 用户管理系统 1Panel 部署教程
 
-本文只讲 1Panel 面板部署。当前项目是新架构版本：NestJS API、Vue 管理端、Vue 用户端、MySQL、Prisma，不再使用旧版 `server.js` 和网页安装向导。
+本文只讲 1Panel 面板部署。当前项目是新架构版本：NestJS API、Vue 管理端、Vue 用户端、MySQL、Prisma。
+
+1Panel 面板部署推荐上传 Linux 预构建部署包。创建 Node.js 运行环境后，启动命令填写 `npm start`，首次打开会进入安装向导；安装完成并重启运行环境后，`npm start` 会自动进入正式 API。完整源码也可以部署，但会在服务器上重新构建，耗时更长。
 
 ## 1. 准备条件
 
@@ -11,7 +13,7 @@
 - 1Panel 运行环境里的 Node.js，建议 Node.js 20+
 - OpenResty/Nginx 网站功能
 - 一个域名，推荐使用 HTTPS
-- 本项目完整源码
+- 本项目 Linux 预构建部署包，或完整源码
 
 默认信息：
 
@@ -25,9 +27,9 @@ API 前缀：https://你的域名/api/
 
 ## 2. 选择部署方式和创建数据库
 
-如果你想不用面板手动上传源码，也可以在 1Panel 终端直接执行一键脚本。下面命令默认在 `root` 用户下执行；如果当前不是 `root`，请先切换到 `root` 用户。脚本会询问访问方式：选择跳过域名就是 `IP:3388` 访问；选择域名访问会继续输入域名，并可自动申请 HTTPS 证书。
+如果你想不用面板手动上传部署包，也可以在 1Panel 终端直接执行一键脚本。下面命令默认在 `root` 用户下执行；如果当前不是 `root`，请先切换到 `root` 用户。脚本默认优先下载 Linux 预构建包，包不可用时回退源码构建；安装为 `IP:3388` 访问，安装完成后可通过 `shiye` 菜单第 6 项配置域名、Nginx 和 HTTPS。
 
-一键脚本默认是精简运行目录：构建时只获取必要项目文件，安装完成后只保留运行必需项，不会把 README、部署文档、安装脚本、前后端源码和 `.git` 长期留在服务器运行目录。
+一键脚本默认是精简运行目录：优先使用预构建运行文件，安装完成后只保留运行必需项，不会把 README、部署文档、安装脚本、前后端源码和 `.git` 长期留在服务器运行目录。
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh)"
@@ -39,7 +41,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/
 shiye
 ```
 
-菜单标题只显示“管理面板”，可执行安装/更新、查看当前配置、查看状态、重启、日志、配置或取消域名、重新构建、数据库迁移、备份和卸载。
+菜单标题只显示“管理面板”，可执行安装/更新、查看当前配置、查看状态、重启、日志、配置或取消域名、更新/重装运行文件、数据库迁移、备份和卸载。
 
 也可以提前带入域名和 HTTPS 参数：
 
@@ -49,7 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/instal
 
 继续使用 1Panel 面板部署时，按下面步骤操作。
 
-注意：一键脚本部署和下面的 1Panel 手动源码部署二选一即可。不要一边用一键脚本安装到 `/opt/shiye`，一边又在 1Panel 里用另一套运行环境启动同一项目，否则会出现两个启动方式，排查会很乱。
+注意：一键脚本部署和下面的 1Panel 手动部署二选一即可。不要一边用一键脚本安装到 `/opt/shiye`，一边又在 1Panel 里用另一套运行环境启动同一项目，否则会出现两个启动方式，排查会很乱。
 
 进入 1Panel：
 
@@ -85,15 +87,27 @@ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}' | grep -i mysql
 /opt/shiye
 ```
 
-上传并解压源码后，目录根部必须能看到：
+上传并解压 Linux 预构建部署包后，目录根部必须能看到：
 
 ```text
 /opt/shiye/package.json
 /opt/shiye/apps/
 /opt/shiye/packages/
+/opt/shiye/dist/
 /opt/shiye/prisma/
 /opt/shiye/infra/
 /opt/shiye/install.sh
+```
+
+预构建包里必须已经包含这些运行文件：
+
+```text
+/opt/shiye/apps/api/dist/main.js
+/opt/shiye/packages/shared/dist/index.js
+/opt/shiye/packages/xui-client/dist/index.js
+/opt/shiye/packages/payment-core/dist/index.js
+/opt/shiye/dist/user-web/index.html
+/opt/shiye/dist/admin-web/index.html
 ```
 
 不要解压成多一层目录，例如：
@@ -104,52 +118,7 @@ docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}' | grep -i mysql
 
 如果多了一层，把里面的所有文件移动到 `/opt/shiye`。
 
-## 4. 配置环境变量
-
-进入服务器终端或 1Panel 终端：
-
-```bash
-cd /opt/shiye
-cp .env.example .env
-```
-
-编辑 `.env`，至少修改：
-
-```env
-NODE_ENV=production
-PORT=3388
-PUBLIC_WEB_URL=https://你的域名
-DATABASE_URL=mysql://shiye:你的数据库密码@数据库地址:3306/shiye_management
-SESSION_SECRET=换成强随机字符串
-ENCRYPTION_KEY=换成32字节base64密钥
-CARD_HASH_SECRET=换成强随机字符串
-DEFAULT_ADMIN_USERNAME=admin
-DEFAULT_ADMIN_PASSWORD=换成强后台密码
-```
-
-生成密钥：
-
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-`ENCRYPTION_KEY` 必须备份好，丢失后已保存的 3x-ui Token、密码和支付密钥无法解密。
-
-## 5. 安装依赖、初始化数据库和构建
-
-执行：
-
-```bash
-cd /opt/shiye
-npm ci
-npm run install:prod
-npm prune --omit=dev
-```
-
-注意：不要直接执行 `npm ci --omit=dev` 或 `npm install --omit=dev` 后再构建。前端和 TypeScript 构建需要 devDependencies。正确顺序是先完整安装依赖，构建完成后再 `npm prune --omit=dev`。
-
-## 6. 创建 Node.js 运行环境
+## 4. 创建 Node.js 运行环境
 
 进入 1Panel：
 
@@ -167,9 +136,55 @@ Node 版本：20.x
 端口：3388
 ```
 
-如果 1Panel 允许填写环境变量，可以留空，因为项目会读取 `/opt/shiye/.env`。
+如果 1Panel 允许填写环境变量，可以留空。首次启动时，项目会打开网页安装向导并自动生成 `/opt/shiye/.env`。
 
-启动后测试：
+如果 1Panel 创建 Node.js 运行环境时有“安装命令”，可以填写：
+
+```bash
+npm ci
+```
+
+不要填写 `npm ci --omit=dev`。首次安装需要 Prisma、seed 等安装工具；即使这里不填，网页安装向导也会在“开始安装”时自动执行 `npm ci`，完成初始化后再执行 `npm prune --omit=dev`。
+
+## 5. 打开网页安装向导
+
+运行环境启动后，浏览器访问：
+
+```text
+http://服务器IP:3388
+```
+
+如果已经先绑定了域名，也可以访问你的域名。页面会要求填写：
+
+```text
+端口：3388
+数据库地址：例如 mysql、1panel-mysql 或数据库页面显示的内网地址
+数据库端口：3306
+数据库名：shiye_management
+数据库用户名：shiye
+数据库密码：你创建数据库时设置的密码
+管理员账号：admin
+管理员密码：你要设置的后台密码
+```
+
+安装向导会自动生成：
+
+```text
+SESSION_SECRET
+JWT_SECRET
+ENCRYPTION_KEY
+CARD_HASH_SECRET
+```
+
+点击“保存配置”，再点击“开始安装”。使用预构建包时，安装过程会执行：检查配置、生成 Prisma Client、迁移数据库、初始化管理员、部署检查，最后清理开发依赖；不会在服务器上重新构建 API/管理端/用户端。只有上传完整源码时，才会执行源码构建流程。
+
+安装完成后，回到 1Panel 重启这个 Node.js 运行环境。重启后 `npm start` 会检测到已经安装完成，并直接启动正式 API。
+
+`ENCRYPTION_KEY` 会写入 `/opt/shiye/.env`，必须备份好。丢失后，已保存的 3x-ui Token、密码和支付密钥无法解密。
+
+## 6. 验证运行状态
+
+重启后测试：
 
 ```bash
 curl http://127.0.0.1:3388/api/health
@@ -178,7 +193,7 @@ curl http://127.0.0.1:3388/api/setup/status
 
 如果 Node 运行环境在容器内，`127.0.0.1:3388` 可能只在容器内可见。反代时需要使用 1Panel 给出的运行环境访问地址、容器名或服务器内网 IP。
 
-## 7. 创建网站并配置反向代理/静态目录
+## 7. 创建网站并配置整站反向代理
 
 进入 1Panel：
 
@@ -186,66 +201,43 @@ curl http://127.0.0.1:3388/api/setup/status
 网站 -> 创建网站
 ```
 
-推荐使用 OpenResty/Nginx 配置直接托管前端静态文件，并把 `/api/` 代理到 API。
-
-站点根目录：
+当前版本由 Node.js 一个端口同时提供用户端、管理端和 API：
 
 ```text
-/opt/shiye/dist/user-web
+用户端：https://你的域名/
+管理端：https://你的域名/admin/
+API：https://你的域名/api/
 ```
 
-推荐 Nginx 配置，把 `你的域名` 和路径按实际情况替换：
+所以 1Panel 里只需要把整个网站反向代理到 Node.js 运行环境端口，不需要单独配置 `/api/`，也不需要把站点根目录指向 `dist/user-web`。
+
+推荐配置：
+
+```text
+反向代理目标：http://127.0.0.1:3388
+```
+
+如果 1Panel 的 OpenResty 与 Node.js 运行环境不在同一个网络，`127.0.0.1:3388` 可能访问不到 Node.js 服务。此时把目标地址改成 1Panel 给出的 Node.js 运行环境访问地址、容器名或服务器内网 IP。
+
+手动写 Nginx/OpenResty 配置时，只需要下面这一类整站代理配置，把 `你的域名` 按实际情况替换：
 
 ```nginx
 server {
     listen 80;
     server_name 你的域名;
 
-    root /opt/shiye/dist/user-web;
-    index index.html;
-
-    location = /api {
-        return 301 /api/;
-    }
-
-    location /api/ {
-        proxy_pass http://127.0.0.1:3388/api/;
+    location / {
+        proxy_pass http://127.0.0.1:3388;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location = /admin {
-        return 301 /admin/;
-    }
-
-    location /admin/assets/ {
-        alias /opt/shiye/dist/admin-web/assets/;
-        try_files $uri =404;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-
-    location /admin/ {
-        alias /opt/shiye/dist/admin-web/;
-        try_files $uri $uri/ /admin/index.html;
-    }
-
-    location /assets/ {
-        try_files $uri =404;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-
-    location / {
-        try_files $uri $uri/ /index.html;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
     }
 }
 ```
-
-如果 1Panel 的 OpenResty 与 Node.js 运行环境不在同一个网络，`proxy_pass http://127.0.0.1:3388/api/;` 可能访问不到 API。此时把 `127.0.0.1` 改成 Node 运行环境可访问的地址。
 
 ## 8. 申请 HTTPS 证书
 
@@ -286,7 +278,7 @@ https://你的域名/payment/result?trade_no=订单号
 
 ## 10. 更新项目
 
-如果使用一键脚本默认精简部署，运行目录不是 Git 仓库，不能直接 `git pull`。推荐重新执行一键脚本，脚本会保留现有 `.env`，重新获取最新项目文件、迁移数据库、构建并重启服务：
+如果使用一键脚本默认精简部署，运行目录不是 Git 仓库，不能直接 `git pull`。推荐重新执行一键脚本，脚本会保留现有 `.env`，优先获取最新预构建包、迁移数据库、校验并重启服务；如果预构建包不可用，会回退源码构建：
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh)"
@@ -347,13 +339,13 @@ curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/uninst
 curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/uninstall.sh | env DELETE_DATABASE=yes bash
 ```
 
-如果是 1Panel 手动源码部署，需要在 1Panel 里停止并删除 Node.js 运行环境、删除对应网站或反向代理配置，再按需删除 `/opt/shiye` 和数据库。删除数据库会清空用户、余额、订单、节点、卡密、支付配置和同步日志，操作前务必备份 `.env` 和 MySQL 数据。
+如果是 1Panel 手动部署，需要在 1Panel 里停止并删除 Node.js 运行环境、删除对应网站或反向代理配置，再按需删除实际项目目录和数据库。删除数据库会清空用户、余额、订单、节点、卡密、支付配置和同步日志，操作前务必备份 `.env` 和 MySQL 数据。
 
 ## 12. 常见问题
 
 ### 运行环境启动失败，提示找不到 package.json
 
-运行目录填错，或源码多解压了一层。确认运行目录下直接存在：
+运行目录填错，或部署包多解压了一层。确认运行目录下直接存在：
 
 ```text
 package.json
@@ -368,11 +360,11 @@ prisma/
 
 ### API 正常，但页面 404
 
-检查 Nginx/OpenResty `root` 是否指向 `/opt/shiye/dist/user-web`，并确认已经执行 `npm run install:prod` 生成 `dist`。
+检查网站是否整站反向代理到 Node.js 服务，例如 `http://127.0.0.1:3388`。当前版本不需要在 Nginx/OpenResty 里直接托管 `dist/user-web`。
 
 ### 管理端资源 404
 
-检查 `/admin/assets/` 是否使用 `alias /opt/shiye/dist/admin-web/assets/;`，不要代理到 API。
+检查反向代理是否保留完整路径并转发到同一个 Node.js 服务。当前版本不需要单独配置 `/admin/assets/`。
 
 ### 支付回调不到账
 
@@ -380,7 +372,7 @@ prisma/
 
 - `.env` 的 `PUBLIC_WEB_URL` 是否是公网 HTTPS 域名
 - 支付平台回调地址是否是 `/api/payments/:provider/notify`
-- Nginx/OpenResty 是否正确把 `/api/` 代理到 API
+- Nginx/OpenResty 是否把整个网站反向代理到 Node.js 服务
 - 后台支付通道密钥和签名方式是否正确
 
 ## 13. 备份建议

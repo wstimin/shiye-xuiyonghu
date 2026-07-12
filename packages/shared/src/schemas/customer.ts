@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { moneySchema } from './common.js';
+import { moneySchema, paginationQuerySchema } from './common.js';
 
 export const customerStatusSchema = z.enum(['active', 'disabled']);
 
@@ -18,4 +18,13 @@ export const balanceAdjustSchema = z.object({
   mode: z.enum(['add', 'subtract', 'set']),
   amount: moneySchema,
   remark: z.string().trim().max(500).optional()
+});
+
+export const customerListQuerySchema = paginationQuerySchema.extend({
+  status: customerStatusSchema.optional(),
+  balanceMin: moneySchema.optional(),
+  balanceMax: moneySchema.optional()
+}).refine((value) => value.balanceMin === undefined || value.balanceMax === undefined || value.balanceMin <= value.balanceMax, {
+  message: 'balanceMin must be less than or equal to balanceMax',
+  path: ['balanceMin']
 });

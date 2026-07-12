@@ -170,6 +170,14 @@ export class XuiClient {
     return this.request('/panel/api/xray/', { method: 'POST' });
   }
 
+  listOutboundSubscriptions() {
+    return this.request('/panel/api/xray/outbound-subs');
+  }
+
+  refreshOutboundSubscription(id: number | string) {
+    return this.request(`/panel/api/xray/outbound-subs/${encodeURIComponent(String(id))}/refresh`, { method: 'POST' });
+  }
+
   updateXrayConfig(body: { xraySetting: string; outboundTestUrl?: string }) {
     return this.formRequest('/panel/api/xray/update', { method: 'POST', body });
   }

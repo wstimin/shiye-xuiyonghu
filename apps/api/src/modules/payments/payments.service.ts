@@ -31,7 +31,7 @@ type CreatePaymentResult = {
 
 const EPAY_TYPES = ['alipay', 'wechat', 'qqpay', 'bank', 'paypal'];
 
-const RECHARGE_ORDER_TTL_MINUTES = 30;
+const RECHARGE_ORDER_TTL_MINUTES = 20;
 
 @Injectable()
 export class PaymentsService {
@@ -420,19 +420,25 @@ export class PaymentsService {
       const customer = await tx.customer.findUnique({ where: { id: order.customerId } });
       if (!customer || customer.status !== 'active') throw new BadRequestException('用户不存在或已禁用');
 
-      const beforeBalance = new Prisma.Decimal(customer.balance);
       const amount = new Prisma.Decimal(order.amount);
-      const afterBalance = beforeBalance.plus(amount);
 
-      await tx.customer.update({ where: { id: customer.id }, data: { balance: afterBalance } });
-      const paidOrder = await tx.rechargeOrder.update({
-        where: { id: order.id },
+      const paidOrderResult = await tx.rechargeOrder.updateMany({
+        where: { id: order.id, status: 'pending' },
         data: {
           status: 'paid',
           paidAt: new Date(),
           rawPayload: toJsonValue({ notify: detail.raw, callbackNo: detail.callbackNo || null })
         }
       });
+      if (paidOrderResult.count !== 1) return { ok: true, duplicate: true };
+      const updatedCustomer = await tx.customer.update({
+        where: { id: customer.id },
+        data: { balance: { increment: amount } },
+        select: { balance: true }
+      });
+      const afterBalance = new Prisma.Decimal(updatedCustomer.balance);
+      const beforeBalance = afterBalance.minus(amount);
+      const paidOrder = await tx.rechargeOrder.findUnique({ where: { id: order.id } });
       await tx.balanceLog.create({
         data: {
           customerId: customer.id,

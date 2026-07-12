@@ -115,7 +115,7 @@ async function createRechargeOrder() {
     });
     lastOrder.value = result;
     qrImage.value = result.qrCode ? await QRCode.toDataURL(result.qrCode, { width: 220, margin: 1 }) : '';
-    message.value = `充值订单已创建：${result.order.tradeNo}，请在 30 分钟内完成支付`;
+    message.value = `充值订单已创建：${result.order.tradeNo}，请在 20 分钟内完成支付`;
     notifySuccess(message.value, '订单已创建');
     if (result.payUrl) window.location.href = result.payUrl;
   } catch (err) {

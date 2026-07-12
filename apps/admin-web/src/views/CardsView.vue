@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Copy, CreditCard, Edit3, Layers, Plus, RefreshCw, Trash2 } from 'lucide-vue-next';
+import { Copy, CreditCard, Download, Edit3, Layers, Plus, RefreshCw, Trash2 } from 'lucide-vue-next';
 import { api } from '../api';
 
 type CardTemplate = { id: string; name: string; amount: string; quantity: number; prefix?: string | null; enabled: boolean; remark?: string | null };
@@ -25,6 +25,8 @@ const clearingUsedBatchIds = ref<Set<string>>(new Set());
 const activePanels = ref(['templates', 'batches']);
 const templateDialogVisible = ref(false);
 const generateDialogVisible = ref(false);
+const generatedCodes = ref<string[]>([]);
+const generatedBatchName = ref('');
 const generateForm = reactive({ templateId: '', name: defaultBatchName(), amount: 10, quantity: 10, prefix: '' });
 const templateForm = reactive({ name: '', amount: 10, quantity: 10, prefix: '', enabled: true, remark: '' });
 
@@ -34,6 +36,7 @@ const unusedCardCount = computed(() => cards.value.filter((card) => card.status 
 const usedCardCount = computed(() => cards.value.filter((card) => card.status === 'used').length);
 const enabledTemplates = computed(() => templates.value.filter((template) => template.enabled));
 const selectedTemplate = computed(() => templates.value.find((item) => item.id === generateForm.templateId));
+const generatedCodesText = computed(() => generatedCodes.value.join('\n'));
 const templateGroups = computed<TemplateGroup[]>(() => {
   const groups: TemplateGroup[] = templates.value.map((template) => ({
     id: template.id,
@@ -92,8 +95,9 @@ async function generateCards() {
       ? { templateId: template.id, name: generateForm.name || defaultBatchName(template.name), amount: Number(template.amount), quantity: template.quantity, prefix: template.prefix || '' }
       : { ...generateForm, templateId: undefined };
     const result = await api<{ batchId: string; generated: number; codes: string[] }>('/api/admin/cards/generate', { method: 'POST', body });
+    generatedCodes.value = result.codes;
+    generatedBatchName.value = body.name;
     ElMessage.success(`已生成 ${result.codes.length} 张卡密`);
-    generateDialogVisible.value = false;
     resetGenerateForm(template?.id || '');
     await loadCards();
   } catch (err) {
@@ -109,6 +113,8 @@ function openTemplateDialog() {
 }
 
 function openGenerateDialog(template?: CardTemplate) {
+  generatedCodes.value = [];
+  generatedBatchName.value = '';
   resetGenerateForm();
   if (template) useTemplate(template);
   generateDialogVisible.value = true;
@@ -212,6 +218,31 @@ async function copyCodes(codes: string[], message = `已复制 ${codes.length} �
   } catch (err) {
     ElMessage.error(err instanceof Error ? err.message : '复制失败');
   }
+}
+
+function exportCodes(codes: string[], filename: string) {
+  if (!codes.length) {
+    ElMessage.warning('没有可导出的卡密');
+    return;
+  }
+  downloadText(`${safeFileName(filename)}.txt`, codes.join('\n'));
+  ElMessage.success(`已导出 ${codes.length} 张卡密`);
+}
+
+function downloadText(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function safeFileName(value: string) {
+  return value.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 80) || 'card-codes';
 }
 
 async function copyText(text: string) {
@@ -341,33 +372,42 @@ onMounted(loadCards);
   <div class="panel list-panel">
     <div class="panel-toolbar">
       <strong>卡密业务</strong>
-      <div class="table-toolbar-actions">
-        <el-button type="danger" plain :loading="clearingUsed" @click="removeUsedCards"><Trash2 :size="15" />清除全部已使用记录</el-button>
+    </div>
+    <div class="danger-zone compact-danger-zone">
+      <div>
+        <strong>已使用记录清理</strong>
+        <span>仅清理已使用卡密记录，不影响余额流水和已完成兑换结果。</span>
       </div>
+      <el-button type="danger" plain :loading="clearingUsed" @click="removeUsedCards"><Trash2 :size="15" />清除全部已使用记录</el-button>
     </div>
     <el-collapse v-model="activePanels" class="admin-collapse">
       <el-collapse-item name="templates">
         <template #title>
           <div class="collapse-title"><strong>模板列表</strong><span>{{ templates.length }} 个模板</span></div>
         </template>
-        <el-table :data="templates" v-loading="loading" style="width: 100%">
-          <el-table-column prop="name" label="模板名称" min-width="150" />
-          <el-table-column prop="amount" label="金额" width="110" />
-          <el-table-column prop="quantity" label="数量" width="90" />
-          <el-table-column prop="prefix" label="前缀" width="120" />
-          <el-table-column label="状态" width="90"><template #default="{ row }: { row: CardTemplate }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-          <el-table-column prop="remark" label="备注" min-width="180" />
-          <el-table-column label="操作" width="330" fixed="right">
-            <template #default="{ row }: { row: CardTemplate }">
-              <div class="row-actions">
-                <el-button size="small" type="primary" plain @click="openGenerateDialog(row)"><Plus :size="14" />生成</el-button>
-                <el-button size="small" @click="editTemplate(row)"><Edit3 :size="14" />编辑</el-button>
-                <el-button size="small" :loading="deletingUnusedTemplateIds.has(row.id)" @click="removeUnusedTemplateCards(row)"><Trash2 :size="14" />删除未使用</el-button>
-                <el-button size="small" type="danger" plain @click="removeTemplate(row)">删除模板</el-button>
+        <div v-loading="loading" class="entity-card-grid template-card-grid">
+          <section v-for="template in templates" :key="template.id" class="entity-card template-card">
+            <div class="entity-card-head">
+              <div>
+                <strong>{{ template.name }}</strong>
+                <span>{{ template.remark || '暂无备注' }}</span>
               </div>
-            </template>
-          </el-table-column>
-        </el-table>
+              <el-tag :type="template.enabled ? 'success' : 'info'">{{ template.enabled ? '启用' : '停用' }}</el-tag>
+            </div>
+            <div class="entity-card-stats">
+              <div><span>金额</span><strong>{{ template.amount }}</strong></div>
+              <div><span>数量</span><strong>{{ template.quantity }}</strong></div>
+              <div><span>前缀</span><strong>{{ template.prefix || '-' }}</strong></div>
+            </div>
+            <div class="entity-card-actions">
+              <el-button size="small" type="primary" plain @click="openGenerateDialog(template)"><Plus :size="14" />生成</el-button>
+              <el-button size="small" @click="editTemplate(template)"><Edit3 :size="14" />编辑</el-button>
+              <el-button size="small" :loading="deletingUnusedTemplateIds.has(template.id)" @click="removeUnusedTemplateCards(template)"><Trash2 :size="14" />删除未使用</el-button>
+              <el-button size="small" type="danger" plain @click="removeTemplate(template)">删除模板</el-button>
+            </div>
+          </section>
+          <div v-if="!templates.length && !loading" class="empty-panel entity-empty">暂无卡密模板</div>
+        </div>
       </el-collapse-item>
 
       <el-collapse-item name="batches">
@@ -385,6 +425,7 @@ onMounted(loadCards);
                 <el-button v-if="group.template" size="small" type="primary" plain @click="openGenerateDialog(group.template)"><Plus :size="14" />继续生成</el-button>
                 <el-button size="small" type="success" plain :disabled="!unusedFullCodesForGroup(group).length" @click="copyCodes(unusedFullCodesForGroup(group), `已复制 ${group.name} 未使用卡密`)"><Copy :size="14" />复制未使用</el-button>
                 <el-button size="small" plain :disabled="!fullCodesForGroup(group).length" @click="copyCodes(fullCodesForGroup(group), `已复制 ${group.name} 全部可复制卡密`)"><Copy :size="14" />复制全部</el-button>
+                <el-button size="small" plain :disabled="!fullCodesForGroup(group).length" @click="exportCodes(fullCodesForGroup(group), `${group.name}-all-codes`)"><Download :size="14" />导出</el-button>
               </div>
             </div>
             <div class="card-count-strip">
@@ -402,6 +443,7 @@ onMounted(loadCards);
                   <div class="table-toolbar-actions batch-actions">
                     <el-button size="small" type="success" plain :disabled="!hasUnusedFullCodes(batch)" @click="copyCodes(unusedFullCodes(batch), '已复制本批未使用卡密')"><Copy :size="15" />复制未使用</el-button>
                     <el-button size="small" type="primary" plain :disabled="!hasFullCodes(batch)" @click="copyCodes(fullCodes(batch))"><Copy :size="15" />复制整批</el-button>
+                    <el-button size="small" plain :disabled="!hasFullCodes(batch)" @click="exportCodes(fullCodes(batch), `${batch.name}-all-codes`)"><Download :size="15" />导出</el-button>
                     <el-button size="small" plain :loading="clearingUsedBatchIds.has(batch.id)" @click="removeUsedBatchCards(batch)"><Trash2 :size="15" />清除已使用</el-button>
                     <el-button size="small" type="danger" plain @click="removeBatch(batch)">删除批次</el-button>
                   </div>
@@ -425,7 +467,11 @@ onMounted(loadCards);
         <template #title>
           <div class="collapse-title"><strong>卡密列表</strong><span>{{ cards.length }} 条记录</span></div>
         </template>
-        <div class="table-toolbar-actions collapse-actions">
+        <div class="danger-zone collapse-danger-zone">
+          <div>
+            <strong>清除已使用记录</strong>
+            <span>保留未使用卡密，已使用记录清理前会再次确认。</span>
+          </div>
           <el-button size="small" type="danger" plain :loading="clearingUsed" @click="removeUsedCards"><Trash2 :size="15" />清除已使用记录</el-button>
         </div>
         <el-table :data="cards" v-loading="loading" style="width: 100%">
@@ -478,6 +524,14 @@ onMounted(loadCards);
         </div>
       </section>
     </el-form>
+    <section v-if="generatedCodes.length" class="dialog-form-section generated-text-section">
+      <div class="dialog-section-head"><strong>生成结果</strong><span>{{ generatedCodes.length }} 张卡密，每行一张。</span></div>
+      <el-input :model-value="generatedCodesText" type="textarea" :rows="10" readonly />
+      <div class="table-toolbar-actions generated-text-actions">
+        <el-button type="primary" plain @click="copyCodes(generatedCodes, '已复制本次生成卡密')"><Copy :size="15" />复制文本</el-button>
+        <el-button plain @click="exportCodes(generatedCodes, `${generatedBatchName || 'generated'}-codes`)"><Download :size="15" />导出</el-button>
+      </div>
+    </section>
     <template #footer>
       <el-button @click="generateDialogVisible = false">取消</el-button>
       <el-button type="primary" :loading="generating" :disabled="!generateForm.name" @click="generateCards">生成</el-button>

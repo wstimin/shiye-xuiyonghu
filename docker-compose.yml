@@ -12,11 +12,5 @@ services:
     ports:
       - "3306:3306"
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-
 volumes:
   mysql-data:

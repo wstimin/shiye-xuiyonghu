@@ -37,6 +37,8 @@ type ServiceNodeConfig = {
   encryption?: string;
   socksRelayEnabled?: boolean;
   socksNodeId?: string | null;
+  remoteSocksOutboundTag?: string;
+  remoteSocksImported?: boolean;
   remoteMode?: 'create' | 'bind';
   remoteManaged?: boolean;
   remoteInboundTag?: string;
@@ -81,6 +83,19 @@ type RealityTargetInfo = {
   target: string;
   serverName: string;
   scan?: Record<string, unknown> | null;
+};
+
+type RemoteSocksOutbound = {
+  tag: string;
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+};
+
+type RemoteSocksRouteState = {
+  socksOutbounds: Map<string, RemoteSocksOutbound>;
+  routesByInboundTag: Map<string, { outboundTag: string; rule: Record<string, unknown> }>;
 };
 
 const SHIYE_ROUTE_MARK = 'shiye-service-node';
@@ -223,7 +238,7 @@ export class XuiService {
     const xraySetting = this.xuiObject(rawSetting);
     if (!Object.keys(xraySetting).length) throw new BadGatewayException('3x-ui returned an empty Xray config');
 
-    const nextConfig = this.removeManagedSocksRoute(xraySetting, serviceNode.id);
+    const nextConfig = this.removeManagedSocksRoute(xraySetting, serviceNode.id, inboundTag, config.remoteSocksOutboundTag);
     let action: 'removed' | 'updated' = 'removed';
     let socksDetail: Record<string, unknown> | null = null;
 
@@ -233,7 +248,7 @@ export class XuiService {
       if (!socksNode) throw new NotFoundException('Socks node not found');
       if (!socksNode.enabled) throw new BadRequestException('Selected Socks node is disabled');
 
-      const outbound = this.buildSocksOutbound(outboundTag, socksNode);
+      const outbound = this.buildSocksOutbound(outboundTag, socksNode, serviceNode.id);
       const outbounds = Array.isArray(nextConfig.outbounds) ? nextConfig.outbounds : [];
       outbounds.push(outbound);
       nextConfig.outbounds = outbounds;
@@ -501,6 +516,10 @@ export class XuiService {
     }
 
     for (const node of serviceNode.customerNodes) {
+      if (!serviceNode.enabled && node.status === 'active') {
+        results.push({ target: `customer:${node.id}`, updated: false, skipped: true, message: '服务节点已停用，用户节点无需继续同步为启用' });
+        continue;
+      }
       try {
         await this.syncCustomerNode(node.customerId, node.id, { status: node.status, trafficLimitGb: serviceNode.trafficLimitGb, createIfMissing: false });
         results.push({ target: `customer:${node.id}`, updated: true });
@@ -639,6 +658,8 @@ export class XuiService {
     const payload = await client.listInbounds();
     this.assertXuiSuccess(payload);
     const inbounds = this.xuiArray(payload);
+    const remoteSocksState = await this.loadRemoteSocksRouteState(client);
+    const importedSocks = await this.importRemoteSocksOutbounds(server.id, server.name, remoteSocksState);
 
     const results: Array<{ inboundId: number; name: string; action: 'created' | 'updated' | 'skipped'; serviceNodeId?: string; message?: string }> = [];
     for (const rawInbound of inbounds) {
@@ -666,11 +687,23 @@ export class XuiService {
         const existingRemoteMode = previousConfig.remoteMode === 'create' || previousConfig.remoteMode === 'bind'
           ? previousConfig.remoteMode
           : existingRemoteManaged ? 'create' : 'bind';
+        const inboundTag = String(inbound.tag || previousConfig.remoteInboundTag || `inbound-${inboundId}`);
+        const directOutboundTags = this.stringList(inbound.outboundTag);
+        const remoteSocks = await this.importRemoteSocksForInbound(server.id, server.name, inboundTag, remoteSocksState, directOutboundTags);
+        const remoteSocksConfig = remoteSocks
+          ? {
+            socksRelayEnabled: true,
+            socksNodeId: remoteSocks.socksNodeId,
+            remoteSocksOutboundTag: remoteSocks.outboundTag,
+            remoteSocksImported: true
+          }
+          : {};
         const config = {
           ...previousConfig,
+          ...remoteSocksConfig,
           remoteMode: existing ? existingRemoteMode : 'bind',
           remoteManaged: existing ? existingRemoteManaged : false,
-          remoteInboundTag: String(inbound.tag || previousConfig.remoteInboundTag || ''),
+          remoteInboundTag: inboundTag,
           remoteInboundRemark: String(inbound.remark || previousConfig.remoteInboundRemark || ''),
           remoteInboundPort: port || previousConfig.remoteInboundPort || undefined,
           remoteClientEmail: remoteClient.email || previousConfig.remoteClientEmail || undefined,
@@ -716,8 +749,95 @@ export class XuiService {
     const created = results.filter((item) => item.action === 'created').length;
     const updated = results.filter((item) => item.action === 'updated').length;
     const skipped = results.filter((item) => item.action === 'skipped').length;
-    await this.writeSyncLog(serverId, 'server-inbounds-import', skipped ? 'partial' : 'success', `Imported remote inbounds from ${server.name}`, { created, updated, skipped, results });
-    return { serverId, serverName: server.name, total: results.length, created, updated, skipped, results };
+    await this.writeSyncLog(serverId, 'server-inbounds-import', skipped ? 'partial' : 'success', `Imported remote inbounds from ${server.name}`, {
+      created,
+      updated,
+      skipped,
+      remoteSocksFound: remoteSocksState.socksOutbounds.size,
+      remoteSocksImported: importedSocks.length,
+      results
+    });
+    return { serverId, serverName: server.name, total: results.length, created, updated, skipped, remoteSocksFound: remoteSocksState.socksOutbounds.size, remoteSocksImported: importedSocks.length, results };
+  }
+
+  async syncServerSocksOutbounds(serverId: string) {
+    const server = await this.prisma.xuiServer.findUnique({ where: { id: serverId } });
+    if (!server) throw new NotFoundException('3x-ui server not found');
+    if (!server.enabled) throw new BadRequestException('3x-ui server is disabled');
+
+    try {
+      const client = await this.createAuthenticatedClient(server);
+      const remoteSocksState = await this.loadRemoteSocksRouteState(client);
+      const importedSocks = await this.importRemoteSocksOutbounds(server.id, server.name, remoteSocksState);
+      const result = {
+        serverId,
+        serverName: server.name,
+        remoteSocksFound: remoteSocksState.socksOutbounds.size,
+        remoteSocksImported: importedSocks.length,
+        importedSocks
+      };
+      await this.writeSyncLog(serverId, 'server-socks-outbounds-import', 'success', `Imported remote SOCKS outbounds from ${server.name}`, result);
+      return result;
+    } catch (error) {
+      await this.writeSyncLog(serverId, 'server-socks-outbounds-import', 'failed', this.errorMessage(error), { message: this.errorMessage(error) });
+      throw new BadGatewayException(`Sync remote SOCKS outbounds failed: ${this.errorMessage(error)}`);
+    }
+  }
+
+  async deleteRemoteSocksOutbound(serverId: string, outboundTag: string) {
+    const server = await this.prisma.xuiServer.findUnique({ where: { id: serverId } });
+    if (!server) throw new NotFoundException('3x-ui server not found');
+    if (!server.enabled) throw new BadRequestException('3x-ui server is disabled');
+    if (!outboundTag) throw new BadRequestException('Remote outbound tag is required');
+
+    try {
+      const client = await this.createAuthenticatedClient(server);
+      const xrayPayload = await client.getXrayConfig();
+      this.assertXuiSuccess(xrayPayload);
+      const xrayObj = this.xuiObject(this.xuiObject(xrayPayload).obj || this.xuiObject(xrayPayload).data || xrayPayload);
+      const rawSetting = xrayObj.xraySetting ?? xrayObj;
+      const xraySetting = this.xuiObject(rawSetting);
+      if (!Object.keys(xraySetting).length) throw new BadGatewayException('3x-ui returned an empty Xray config');
+
+      const outbounds = Array.isArray(xraySetting.outbounds) ? xraySetting.outbounds : [];
+      const beforeOutbounds = outbounds.length;
+      xraySetting.outbounds = outbounds.filter((item) => this.stringValue(this.xuiObject(item).tag) !== outboundTag);
+
+      const routing = this.xuiObject(xraySetting.routing);
+      const rules = Array.isArray(routing.rules) ? routing.rules : [];
+      const beforeRules = rules.length;
+      const nextRules = rules.filter((item) => !this.stringList(this.xuiObject(item).outboundTag).includes(outboundTag));
+      routing.rules = nextRules;
+      xraySetting.routing = routing;
+
+      const removedOutbounds = beforeOutbounds - (xraySetting.outbounds as unknown[]).length;
+      const removedRules = beforeRules - nextRules.length;
+      if (removedOutbounds || removedRules) {
+        const outboundTestUrl = typeof xrayObj.outboundTestUrl === 'string' ? xrayObj.outboundTestUrl : undefined;
+        const response = await client.updateXrayConfig({ xraySetting: JSON.stringify(xraySetting, null, 2), outboundTestUrl });
+        this.assertXuiSuccess(response);
+        const reloadResponse = await client.restartXrayService();
+        this.assertXuiSuccess(reloadResponse);
+        await this.writeSyncLog(serverId, 'server-socks-outbound-delete', 'success', `Deleted remote SOCKS outbound ${outboundTag} from ${server.name}`, {
+          outboundTag,
+          removedOutbounds,
+          removedRules,
+          response: this.toJsonValue(response),
+          reloadResponse: this.toJsonValue(reloadResponse)
+        });
+      } else {
+        await this.writeSyncLog(serverId, 'server-socks-outbound-delete', 'success', `Remote SOCKS outbound ${outboundTag} already absent from ${server.name}`, {
+          outboundTag,
+          removedOutbounds,
+          removedRules
+        });
+      }
+
+      return { deleted: true, serverId, serverName: server.name, outboundTag, removedOutbounds, removedRules };
+    } catch (error) {
+      await this.writeSyncLog(serverId, 'server-socks-outbound-delete', 'failed', this.errorMessage(error), { outboundTag, message: this.errorMessage(error) });
+      throw new BadGatewayException(`Delete remote SOCKS outbound failed: ${this.errorMessage(error)}`);
+    }
   }
 
   async deleteCustomerNode(customerId: string, customerNodeId: string, keepTraffic = false) {
@@ -1384,26 +1504,231 @@ export class XuiService {
     return { exists: false, raw: null };
   }
 
-  private removeManagedSocksRoute(config: Record<string, unknown>, serviceNodeId: string) {
+  private async loadRemoteSocksRouteState(client: XuiClient): Promise<RemoteSocksRouteState> {
+    const xrayPayload = await client.getXrayConfig();
+    this.assertXuiSuccess(xrayPayload);
+    const xrayObj = this.xuiObject(this.xuiObject(xrayPayload).obj || this.xuiObject(xrayPayload).data || xrayPayload);
+    const rawSetting = xrayObj.xraySetting ?? xrayObj;
+    const state = this.remoteSocksRouteState(this.xuiObject(rawSetting));
+    await this.mergeOutboundSubscriptions(client, state);
+    return state;
+  }
+
+  private remoteSocksRouteState(config: Record<string, unknown>): RemoteSocksRouteState {
+    const socksOutbounds = new Map<string, RemoteSocksOutbound>();
+    const outbounds = this.extractOutbounds(config);
+    for (const item of outbounds) {
+      this.addRemoteSocksOutbound(socksOutbounds, item);
+    }
+
+    const routesByInboundTag = new Map<string, { outboundTag: string; rule: Record<string, unknown> }>();
+    const routing = this.xuiObject(config.routing);
+    const rules = Array.isArray(routing.rules) ? routing.rules : [];
+    for (const item of rules) {
+      const rule = this.xuiObject(item);
+      const outboundTag = this.stringList(rule.outboundTag).find((tag) => socksOutbounds.has(tag));
+      if (!outboundTag) continue;
+      for (const inboundTag of this.stringList(rule.inboundTag)) {
+        if (!routesByInboundTag.has(inboundTag)) routesByInboundTag.set(inboundTag, { outboundTag, rule });
+      }
+    }
+
+    return { socksOutbounds, routesByInboundTag };
+  }
+
+  private async mergeOutboundSubscriptions(client: XuiClient, state: RemoteSocksRouteState) {
+    let subscriptions: unknown[] = [];
+    try {
+      const payload = await client.listOutboundSubscriptions();
+      this.assertXuiSuccess(payload);
+      subscriptions = this.xuiArray(payload);
+    } catch {
+      return;
+    }
+
+    for (const item of subscriptions) {
+      const subscription = this.xuiObject(item);
+      const id = subscription.id ?? subscription.subId ?? subscription.subscriptionId;
+      if (id === undefined || id === null || id === '') continue;
+      try {
+        const payload = await client.refreshOutboundSubscription(String(id));
+        this.assertXuiSuccess(payload);
+        for (const outbound of this.extractOutbounds(payload)) this.addRemoteSocksOutbound(state.socksOutbounds, outbound);
+      } catch {
+        // A failed subscription refresh should not block normal inbound sync.
+      }
+    }
+  }
+
+  private addRemoteSocksOutbound(target: Map<string, RemoteSocksOutbound>, item: unknown) {
+    const outbound = this.xuiObject(item);
+    if (String(outbound.protocol || '').toLowerCase() !== 'socks') return;
+    const tag = this.stringValue(outbound.tag);
+    const settings = this.xuiObject(outbound.settings);
+    const servers = Array.isArray(settings.servers) ? settings.servers : [];
+    const server = this.xuiObject(servers[0]);
+    const host = this.stringValue(server.address) || this.stringValue(server.host);
+    const port = this.positiveInteger(server.port);
+    if (!tag || !host || !port) return;
+    const users = Array.isArray(server.users) ? server.users : [];
+    const user = this.xuiObject(users[0]);
+    target.set(tag, {
+      tag,
+      host,
+      port,
+      username: this.stringValue(user.user) || this.stringValue(user.username),
+      password: this.stringValue(user.pass) || this.stringValue(user.password)
+    });
+  }
+
+  private extractOutbounds(value: unknown, seen = new Set<unknown>()): unknown[] {
+    const parsed = this.parseMaybeJson(value);
+    if (!parsed || typeof parsed !== 'object') return [];
+    if (seen.has(parsed)) return [];
+    seen.add(parsed);
+
+    if (Array.isArray(parsed)) return parsed.flatMap((item) => this.extractOutbounds(item, seen));
+
+    const object = parsed as Record<string, unknown>;
+    const self = this.isOutboundConfig(object) ? [object] : [];
+    const direct = Array.isArray(object.outbounds) ? object.outbounds : [];
+    const nestedKeys = ['obj', 'data', 'result', 'items', 'config', 'xraySetting', 'settings'];
+    const nested = nestedKeys.flatMap((key) => this.extractOutbounds(object[key], seen));
+    return [...self, ...direct, ...nested];
+  }
+
+  private isOutboundConfig(value: Record<string, unknown>) {
+    return Boolean(this.stringValue(value.protocol) && this.stringValue(value.tag) && value.settings !== undefined);
+  }
+
+  private async importRemoteSocksForInbound(serverId: string, serverName: string, inboundTag: string, state: RemoteSocksRouteState, directOutboundTags: string[] = []) {
+    const route = state.routesByInboundTag.get(inboundTag);
+    const outboundTag = directOutboundTags.find((tag) => state.socksOutbounds.has(tag)) || route?.outboundTag;
+    if (!outboundTag) return null;
+    const outbound = state.socksOutbounds.get(outboundTag);
+    if (!outbound) return null;
+
+    const socksNode = await this.upsertRemoteSocksNode(serverId, serverName, outbound);
+
+    return { socksNodeId: socksNode.id, outboundTag: outbound.tag };
+  }
+
+  private async importRemoteSocksOutbounds(serverId: string, serverName: string, state: RemoteSocksRouteState) {
+    const imported = [] as Array<{ socksNodeId: string; outboundTag: string }>;
+    for (const outbound of state.socksOutbounds.values()) {
+      const socksNode = await this.upsertRemoteSocksNode(serverId, serverName, outbound);
+      imported.push({ socksNodeId: socksNode.id, outboundTag: outbound.tag });
+    }
+    return imported;
+  }
+
+  private async upsertRemoteSocksNode(serverId: string, serverName: string, outbound: RemoteSocksOutbound) {
+    const username = outbound.username || null;
+    const passwordEnc = this.encryption.encryptNullable(outbound.password);
+    const existing = await this.prisma.socksNode.findFirst({
+      where: {
+        OR: [
+          { sourceServerId: serverId, remoteOutboundTag: outbound.tag },
+          { sourceServerId: null, remoteOutboundTag: null, host: outbound.host, port: outbound.port, username, remark: `Imported from 3x-ui outbound ${outbound.tag}` }
+        ]
+      }
+    });
+    if (existing) {
+      return this.prisma.socksNode.update({
+        where: { id: existing.id },
+        data: {
+          name: this.truncateText(`${serverName} ${outbound.tag}`, 120),
+          host: outbound.host,
+          port: outbound.port,
+          username,
+          passwordEnc,
+          enabled: true,
+          remark: `Imported from 3x-ui outbound ${outbound.tag}`,
+          sourceServerId: serverId,
+          remoteOutboundTag: outbound.tag
+        }
+      });
+    }
+
+    return this.prisma.socksNode.create({
+      data: {
+        name: this.truncateText(`${serverName} ${outbound.tag}`, 120),
+        host: outbound.host,
+        port: outbound.port,
+        username,
+        passwordEnc,
+        enabled: true,
+        remark: `Imported from 3x-ui outbound ${outbound.tag}`,
+        sourceServerId: serverId,
+        remoteOutboundTag: outbound.tag
+      }
+    });
+  }
+
+  private removeManagedSocksRoute(config: Record<string, unknown>, serviceNodeId: string, inboundTag?: string, remoteOutboundTag?: string) {
     const next: Record<string, unknown> = { ...config };
     const outboundTag = this.socksOutboundTag(serviceNodeId);
+    const explicitOutboundTags = new Set([outboundTag, remoteOutboundTag].filter((item): item is string => Boolean(item)));
     const outbounds = Array.isArray(next.outbounds) ? next.outbounds : [];
-    next.outbounds = outbounds.filter((item) => this.xuiObject(item).tag !== outboundTag);
+    const socksOutboundTags = new Set(
+      outbounds
+        .map((item) => this.xuiObject(item))
+        .filter((item) => String(item.protocol || '').toLowerCase() === 'socks')
+        .map((item) => this.stringValue(item.tag))
+        .filter((item): item is string => Boolean(item))
+    );
+    const removedOutboundTags = new Set<string>(explicitOutboundTags);
 
     const routing = this.xuiObject(next.routing);
     if (Object.keys(routing).length) {
       const rules = Array.isArray(routing.rules) ? routing.rules : [];
       routing.rules = rules.filter((item) => {
         const rule = this.xuiObject(item);
-        return rule._shiyeServiceNodeId !== serviceNodeId && rule.outboundTag !== outboundTag;
+        const shouldRemove = this.isManagedSocksRouteRule(rule, serviceNodeId, explicitOutboundTags, socksOutboundTags, inboundTag);
+        if (shouldRemove) {
+          for (const tag of this.stringList(rule.outboundTag)) {
+            if (explicitOutboundTags.has(tag) || socksOutboundTags.has(tag)) removedOutboundTags.add(tag);
+          }
+        }
+        return !shouldRemove;
       });
       next.routing = routing;
     }
 
+    const nextRouting = this.xuiObject(next.routing);
+    const remainingRules = Array.isArray(nextRouting.rules) ? nextRouting.rules : [];
+    const stillReferencedOutboundTags = new Set<string>();
+    for (const item of remainingRules) {
+      for (const tag of this.stringList(this.xuiObject(item).outboundTag)) stillReferencedOutboundTags.add(tag);
+    }
+    next.outbounds = outbounds.filter((item) => {
+      const outbound = this.xuiObject(item);
+      const tag = this.stringValue(outbound.tag);
+      if (!tag) return true;
+      const isServiceManaged = outbound._shiyeServiceNodeId === serviceNodeId || (outbound._shiyeManaged === true && outbound._shiyeMark === SHIYE_ROUTE_MARK && explicitOutboundTags.has(tag));
+      if (tag === outboundTag || isServiceManaged) return false;
+      return !(removedOutboundTags.has(tag) && !stillReferencedOutboundTags.has(tag));
+    });
+
     return next;
   }
 
-  private buildSocksOutbound(tag: string, socksNode: { host: string; port: number; username: string | null; passwordEnc: string | null }) {
+  private isManagedSocksRouteRule(
+    rule: Record<string, unknown>,
+    serviceNodeId: string,
+    explicitOutboundTags: Set<string>,
+    socksOutboundTags: Set<string>,
+    inboundTag?: string
+  ) {
+    const outboundTags = this.stringList(rule.outboundTag);
+    if (rule._shiyeServiceNodeId === serviceNodeId) return true;
+    if (outboundTags.some((tag) => tag === this.socksOutboundTag(serviceNodeId))) return true;
+    if (rule._shiyeManaged === true && rule._shiyeMark === SHIYE_ROUTE_MARK && outboundTags.some((tag) => explicitOutboundTags.has(tag))) return true;
+    if (!inboundTag || !this.stringList(rule.inboundTag).includes(inboundTag)) return false;
+    return outboundTags.some((tag) => explicitOutboundTags.has(tag) || socksOutboundTags.has(tag));
+  }
+
+  private buildSocksOutbound(tag: string, socksNode: { host: string; port: number; username: string | null; passwordEnc: string | null }, serviceNodeId: string) {
     const user = socksNode.username
       ? [{ user: socksNode.username, pass: socksNode.passwordEnc ? this.encryption.decrypt(socksNode.passwordEnc) : '' }]
       : undefined;
@@ -1415,6 +1740,7 @@ export class XuiService {
       },
       streamSettings: { network: 'tcp' },
       _shiyeManaged: true,
+      _shiyeServiceNodeId: serviceNodeId,
       _shiyeMark: SHIYE_ROUTE_MARK
     };
   }
@@ -1596,6 +1922,16 @@ export class XuiService {
 
   private stringValue(value: unknown) {
     return typeof value === 'string' ? value.trim() || undefined : undefined;
+  }
+
+  private stringList(value: unknown) {
+    if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+    const text = this.stringValue(value);
+    return text ? [text] : [];
+  }
+
+  private truncateText(value: string, maxLength: number) {
+    return value.length > maxLength ? value.slice(0, maxLength) : value;
   }
 
   private isShareLink(item: unknown): item is string {

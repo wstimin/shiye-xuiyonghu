@@ -1,4 +1,4 @@
-﻿# 视野 3x-ui 用户管理系统
+﻿# 十夜 3x-ui 用户管理系统
 
 这是重塑后的新架构版本，用于管理 3x-ui 用户节点、余额、卡密、续费、同步日志和充值支付。生产入口以 `apps/*`、`packages/*`、`prisma/*` 为准，旧版 `server.js` 不作为生产部署入口。
 
@@ -26,9 +26,9 @@
 
 ## 一键部署
 
-服务器上直接执行，默认安装到 `/opt/shiye`，服务名 `shiye-api`。下面命令默认在 `root` 用户下执行；如果当前不是 `root`，请先切换到 `root` 用户。脚本会询问访问方式：选择跳过域名就是 `IP:3388` 访问；选择域名访问会继续输入域名，并可自动申请 HTTPS 证书。
+服务器上直接执行，默认安装到 `/opt/shiye`，服务名 `shiye-api`。下面命令默认在 `root` 用户下执行；如果当前不是 `root`，请先切换到 `root` 用户。脚本默认安装为 `IP:3388` 访问，安装完成后可通过 `shiye` 菜单第 6 项配置域名、Nginx 和 HTTPS。
 
-一键脚本默认是精简运行目录：构建时只获取必要项目文件，安装完成后 `/opt/shiye` 只保留运行必需文件，例如 `.env`、`dist`、`node_modules`、`package*.json`、`apps/api/dist`、`packages/*/dist`、`prisma/schema.prisma` 和迁移文件。README、部署文档、安装脚本、前端源码、后端源码和 `.git` 默认不会保留在服务器运行目录。
+一键脚本默认是精简运行目录：优先下载 Linux 预构建包，包不可用时回退源码构建。安装完成后 `/opt/shiye` 只保留运行必需文件，例如 `.env`、`dist`、`node_modules`、`package*.json`、`apps/api/dist`、`packages/*/dist`、`prisma/schema.prisma` 和迁移文件。README、部署文档、安装脚本、前端源码、后端源码和 `.git` 默认不会保留在服务器运行目录。
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh)"
@@ -40,7 +40,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/
 shiye
 ```
 
-菜单标题只显示“管理面板”，包含安装/更新项目、查看当前配置、查看状态、重启服务、查看日志、配置或取消域名、重新构建、数据库迁移、备份和卸载入口。
+菜单标题只显示“管理面板”，包含安装/更新项目、查看当前配置、查看状态、重启服务、查看日志、配置或取消域名、更新/重装运行文件、数据库迁移、备份和卸载入口。
 
 也可以提前带入域名和 HTTPS 参数，直接部署：
 

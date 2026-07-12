@@ -38,6 +38,7 @@ const certIds = ref<Set<string>>(new Set());
 const syncingIds = ref<Set<string>>(new Set());
 const statusIds = ref<Set<string>>(new Set());
 const presenceIds = ref<Set<string>>(new Set());
+const togglingIds = ref<Set<string>>(new Set());
 const error = ref('');
 const searchQuery = ref('');
 const editingId = ref('');
@@ -259,6 +260,26 @@ async function removeServer(server: XuiServer) {
   await loadServers();
 }
 
+async function toggleServerEnabled(server: XuiServer, enabled: boolean | string | number) {
+  const nextEnabled = Boolean(enabled);
+  const previous = server.enabled;
+  togglingIds.value = new Set(togglingIds.value).add(server.id);
+  error.value = '';
+  try {
+    await api(`/api/admin/xui-servers/${server.id}`, { method: 'PATCH', body: { enabled: nextEnabled } });
+    server.enabled = nextEnabled;
+    ElMessage.success(nextEnabled ? '面板连接已启用' : '面板连接已停用');
+  } catch (err) {
+    server.enabled = previous;
+    error.value = err instanceof Error ? err.message : '更新面板连接状态失败';
+    ElMessage.error(error.value);
+  } finally {
+    const next = new Set(togglingIds.value);
+    next.delete(server.id);
+    togglingIds.value = next;
+  }
+}
+
 function resetForm() {
   editingId.value = '';
   Object.assign(form, { name: '', baseUrl: '', basePath: '', username: '', password: '', token: '', tlsServerName: '', tlsCertFile: '', tlsKeyFile: '', realityTarget: '', realityServerName: '', realityFingerprint: 'chrome', realitySpiderX: '/', enabled: true, remark: '' });
@@ -356,48 +377,47 @@ onMounted(loadServers);
       </el-input>
       <span class="filter-summary">显示 {{ filteredServers.length }} / {{ servers.length }}</span>
     </div>
-    <el-table :data="filteredServers" v-loading="loading" style="width: 100%">
-      <el-table-column prop="name" label="名称" min-width="140" />
-      <el-table-column prop="baseUrl" label="面板地址" min-width="220" />
-      <el-table-column prop="basePath" label="路径" width="120" />
-      <el-table-column label="证书/Reality" min-width="170">
-        <template #default="{ row }: { row: XuiServer }">
+    <div v-loading="loading" class="entity-card-grid server-card-grid">
+      <article v-for="server in filteredServers" :key="server.id" class="entity-card server-card">
+        <div class="entity-card-head">
+          <div>
+            <strong>{{ server.name }}</strong>
+            <span>{{ server.baseUrl }}{{ server.basePath || '' }}</span>
+          </div>
           <div class="tag-stack">
-            <el-tag v-if="hasTlsConfig(row)" size="small" type="success">TLS 证书</el-tag>
-            <el-tag size="small">Reality {{ row.config?.realityTarget ? '候选 ' + row.config.realityTarget : '自动探测' }}</el-tag>
+            <el-switch v-model="server.enabled" size="small" :loading="togglingIds.has(server.id)" @change="(value: boolean | string | number) => toggleServerEnabled(server, value)" />
+            <el-tag v-if="server.hasToken" size="small" type="success">Token</el-tag>
+            <el-tag v-else-if="server.hasPassword" size="small">账号密码</el-tag>
+            <el-tag v-else size="small" type="warning">未配置</el-tag>
           </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="凭据" width="150">
-        <template #default="{ row }: { row: XuiServer }">
-          <el-tag v-if="row.hasToken" size="small" type="success">Token</el-tag>
-          <el-tag v-else-if="row.hasPassword" size="small">账号密码</el-tag>
-          <el-tag v-else size="small" type="warning">未配置</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }: { row: XuiServer }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template>
-      </el-table-column>
-      <el-table-column label="操作" width="520" fixed="right">
-        <template #default="{ row }: { row: XuiServer }">
-          <div class="row-actions row-actions-split">
-            <div class="row-action-group remote-action">
-              <span class="action-group-label">远端读取</span>
-              <el-button size="small" :loading="testingIds.has(row.id)" @click="testSaved(row)"><Wifi :size="15" />测试</el-button>
-              <el-button size="small" :loading="certIds.has(row.id)" @click="testSavedCerts(row)"><Activity :size="15" />证书</el-button>
-              <el-button size="small" :loading="statusIds.has(row.id)" @click="showServerStatus(row)"><Activity :size="15" />状态</el-button>
-              <el-button size="small" :loading="presenceIds.has(row.id)" @click="showClientPresence(row)"><Users :size="15" />在线</el-button>
-              <el-button size="small" :loading="syncingIds.has(row.id)" :disabled="!row.enabled" @click="syncServer(row)"><RefreshCw :size="15" />同步</el-button>
-            </div>
-            <div class="row-action-group manage-action">
-              <span class="action-group-label">管理</span>
-              <el-button size="small" @click="editServer(row)"><Edit3 :size="15" />编辑</el-button>
-              <el-button size="small" type="danger" plain @click="removeServer(row)"><Trash2 :size="15" />删除</el-button>
-            </div>
+        </div>
+        <div class="entity-card-stats">
+          <div><span>路径</span><strong>{{ server.basePath || '/' }}</strong></div>
+          <div><span>TLS</span><strong>{{ hasTlsConfig(server) ? '已配置' : '未配置' }}</strong></div>
+          <div><span>Reality</span><strong>{{ server.config?.realityTarget ? '候选' : '自动探测' }}</strong></div>
+        </div>
+        <div class="entity-card-meta">
+          <span>{{ server.config?.tlsServerName || server.config?.realityServerName || '暂无域名配置' }}</span>
+          <span v-if="server.remark">{{ server.remark }}</span>
+        </div>
+        <div class="entity-card-actions split-card-actions">
+          <div class="row-action-group remote-action">
+            <span class="action-group-label">远端读取</span>
+            <el-button size="small" :loading="testingIds.has(server.id)" @click="testSaved(server)"><Wifi :size="15" />测试</el-button>
+            <el-button size="small" :loading="certIds.has(server.id)" @click="testSavedCerts(server)"><Activity :size="15" />证书</el-button>
+            <el-button size="small" :loading="statusIds.has(server.id)" @click="showServerStatus(server)"><Activity :size="15" />状态</el-button>
+            <el-button size="small" :loading="presenceIds.has(server.id)" @click="showClientPresence(server)"><Users :size="15" />在线</el-button>
+            <el-button size="small" :loading="syncingIds.has(server.id)" :disabled="!server.enabled" @click="syncServer(server)"><RefreshCw :size="15" />同步</el-button>
           </div>
-        </template>
-      </el-table-column>
-    </el-table>
+          <div class="row-action-group manage-action">
+            <span class="action-group-label">管理</span>
+            <el-button size="small" @click="editServer(server)"><Edit3 :size="15" />编辑</el-button>
+            <el-button size="small" type="danger" plain @click="removeServer(server)"><Trash2 :size="15" />删除</el-button>
+          </div>
+        </div>
+      </article>
+      <div v-if="!filteredServers.length && !loading" class="empty-panel entity-empty">暂无面板连接</div>
+    </div>
   </div>
 
   <el-dialog v-model="dialogVisible" :title="editingId ? '编辑面板连接' : '添加面板连接'" width="min(900px, 94vw)" destroy-on-close>

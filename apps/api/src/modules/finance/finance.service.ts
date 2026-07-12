@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { z } from 'zod';
+import { balanceLogListQuerySchema, rechargeOrderListQuerySchema } from '@shiye/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { XuiService } from '../xui/xui.service.js';
 
@@ -7,13 +9,63 @@ import { XuiService } from '../xui/xui.service.js';
 export class FinanceService {
   constructor(private readonly prisma: PrismaService, private readonly xui: XuiService) {}
 
-  async rechargeOrders() {
+  async rechargeOrders(query: z.infer<typeof rechargeOrderListQuerySchema>) {
     await this.prisma.rechargeOrder.updateMany({ where: { status: 'pending', expiresAt: { lte: new Date() } }, data: { status: 'closed' } });
-    return this.prisma.rechargeOrder.findMany({ orderBy: { createdAt: 'desc' }, take: 100, include: { customer: { select: { id: true, name: true, loginUsername: true } } } });
+    const page = query.page;
+    const pageSize = query.pageSize;
+    const keyword = query.keyword?.trim();
+    const where: Prisma.RechargeOrderWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.provider ? { provider: query.provider } : {}),
+      ...createdAtRange(query.from, query.to),
+      ...(keyword ? {
+        OR: [
+          { tradeNo: { contains: keyword } },
+          { customer: { name: { contains: keyword } } },
+          { customer: { loginUsername: { contains: keyword } } }
+        ]
+      } : {})
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.rechargeOrder.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: { customer: { select: { id: true, name: true, loginUsername: true } } }
+      }),
+      this.prisma.rechargeOrder.count({ where })
+    ]);
+    return { items, page, pageSize, total };
   }
 
-  balanceLogs() {
-    return this.prisma.balanceLog.findMany({ orderBy: { createdAt: 'desc' }, take: 100, include: { customer: { select: { id: true, name: true, loginUsername: true } } } });
+  async balanceLogs(query: z.infer<typeof balanceLogListQuerySchema>) {
+    const page = query.page;
+    const pageSize = query.pageSize;
+    const keyword = query.keyword?.trim();
+    const where: Prisma.BalanceLogWhereInput = {
+      ...(query.type ? { type: query.type } : {}),
+      ...createdAtRange(query.from, query.to),
+      ...(keyword ? {
+        OR: [
+          { operator: { contains: keyword } },
+          { remark: { contains: keyword } },
+          { customer: { name: { contains: keyword } } },
+          { customer: { loginUsername: { contains: keyword } } }
+        ]
+      } : {})
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.balanceLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: { customer: { select: { id: true, name: true, loginUsername: true } } }
+      }),
+      this.prisma.balanceLog.count({ where })
+    ]);
+    return { items, page, pageSize, total };
   }
 
   async clearRechargeOrderHistory() {
@@ -21,9 +73,26 @@ export class FinanceService {
     return { deleted: result.count };
   }
 
+  async clearRechargeOrderHistoryRange(from: Date | undefined, to: Date) {
+    const result = await this.prisma.rechargeOrder.deleteMany({
+      where: {
+        status: { not: 'pending' },
+        createdAt: { ...(from ? { gte: from } : {}), lt: to }
+      }
+    });
+    return { deleted: result.count, from, to };
+  }
+
   async clearBalanceLogHistory() {
     const result = await this.prisma.balanceLog.deleteMany({});
     return { deleted: result.count };
+  }
+
+  async clearBalanceLogHistoryRange(from: Date | undefined, to: Date) {
+    const result = await this.prisma.balanceLog.deleteMany({
+      where: { createdAt: { ...(from ? { gte: from } : {}), lt: to } }
+    });
+    return { deleted: result.count, from, to };
   }
 
   async renewCustomerNode(customerId: string, customerNodeId: string, months: number, operator: string) {
@@ -43,9 +112,15 @@ export class FinanceService {
       const beforeExpireAt = customerNode.expireAt;
       const baseDate = beforeExpireAt && beforeExpireAt > now ? beforeExpireAt : now;
       const afterExpireAt = addMonths(baseDate, months);
-      const afterBalance = beforeBalance.minus(amount);
-
-      await tx.customer.update({ where: { id: customerId }, data: { balance: afterBalance } });
+      const debited = await tx.customer.updateMany({
+        where: { id: customerId, balance: { gte: amount } },
+        data: { balance: { decrement: amount } }
+      });
+      if (debited.count !== 1) throw new BadRequestException('余额不足');
+      const updatedCustomer = await tx.customer.findUnique({ where: { id: customerId }, select: { balance: true } });
+      if (!updatedCustomer) throw new NotFoundException('用户不存在');
+      const afterBalance = new Prisma.Decimal(updatedCustomer.balance);
+      const actualBeforeBalance = afterBalance.plus(amount);
       const renewalLog = await tx.renewalLog.create({
         data: {
           customerId,
@@ -63,7 +138,7 @@ export class FinanceService {
           customerId,
           type: 'renewal',
           amount: amount.negated(),
-          beforeBalance,
+          beforeBalance: actualBeforeBalance,
           afterBalance,
           operator,
           remark: `续费 ${customerNode.serviceNode.name} ${months} 个月`,
@@ -172,4 +247,9 @@ function toJsonValue(value: unknown): Prisma.InputJsonValue {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function createdAtRange(from?: Date, to?: Date) {
+  if (!from && !to) return {};
+  return { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } };
 }

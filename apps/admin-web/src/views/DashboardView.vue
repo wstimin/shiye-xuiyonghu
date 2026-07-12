@@ -9,6 +9,14 @@ type ServiceNode = { id: string; enabled: boolean };
 type XuiServer = { id: string; enabled: boolean };
 type CardResult = { total: number; items: Array<{ id: string; status: string }> };
 type PaymentChannel = { id: string; enabled: boolean };
+type Overview = {
+  customers: { total: number; active: number };
+  serviceNodes: { total: number; enabled: number; expiredActive: number };
+  servers: { total: number; enabled: number };
+  cards: { total: number; unused: number };
+  payments: { enabledChannels: number; pendingOrders: number; todayPaidCount: number; todayPaidAmount: string | number };
+  renewals: { todayCount: number; todayAmount: string | number };
+};
 type JobSettings = { disableExpiredEnabled: boolean; trafficSyncEnabled: boolean };
 type DisableExpiredResult = { checkedAt: string; total: number; success: number; failed: number };
 type TrafficSyncResult = { checkedAt: string; checked: number; disabled: number; failed: number };
@@ -24,6 +32,7 @@ const serviceNodes = ref<ServiceNode[]>([]);
 const servers = ref<XuiServer[]>([]);
 const cards = ref<CardResult>({ total: 0, items: [] });
 const paymentChannels = ref<PaymentChannel[]>([]);
+const overview = ref<Overview | null>(null);
 const jobSettings = ref<JobSettings>({ disableExpiredEnabled: true, trafficSyncEnabled: true });
 const lastDisableExpired = ref<DisableExpiredResult | null>(null);
 const lastTrafficSync = ref<TrafficSyncResult | null>(null);
@@ -38,7 +47,8 @@ async function loadDashboard() {
   loading.value = true;
   error.value = '';
   try {
-    const [customerResult, nodeResult, serverResult, cardResult, channelResult, settingsResult, statusResult] = await Promise.all([
+    const [overviewResult, customerResult, nodeResult, serverResult, cardResult, channelResult, settingsResult, statusResult] = await Promise.all([
+      api<Overview>('/api/admin/overview'),
       api<CustomerResult>('/api/admin/customers'),
       api<ServiceNode[]>('/api/admin/service-nodes'),
       api<XuiServer[]>('/api/admin/xui-servers'),
@@ -47,6 +57,7 @@ async function loadDashboard() {
       api<JobSettings>('/api/admin/jobs/settings'),
       api<JobStatus>('/api/admin/jobs/status')
     ]);
+    overview.value = overviewResult;
     customers.value = customerResult;
     serviceNodes.value = nodeResult;
     servers.value = serverResult;
@@ -163,10 +174,10 @@ onMounted(loadDashboard);
   <el-alert v-if="error" class="page-alert" :title="error" type="error" show-icon :closable="false" />
 
   <div class="metric-grid" :class="{ loading }">
-    <div class="metric"><span>用户总数</span><strong>{{ customers.total }}</strong><small>当前页活跃 {{ activeCustomers }}</small></div>
-    <div class="metric"><span>路由节点</span><strong>{{ serviceNodes.length }}</strong><small>已启用 {{ enabledNodes }}</small></div>
-    <div class="metric"><span>面板连接</span><strong>{{ servers.length }}</strong><small>已启用 {{ enabledServers }}</small></div>
-    <div class="metric"><span>卡密总数</span><strong>{{ cards.total }}</strong><small>当前页未使用 {{ unusedCards }}</small></div>
+    <div class="metric"><span>用户总数</span><strong>{{ overview?.customers.total ?? customers.total }}</strong><small>真实活跃 {{ overview?.customers.active ?? activeCustomers }}</small></div>
+    <div class="metric"><span>路由节点</span><strong>{{ overview?.serviceNodes.total ?? serviceNodes.length }}</strong><small>启用 {{ overview?.serviceNodes.enabled ?? enabledNodes }} / 过期 {{ overview?.serviceNodes.expiredActive ?? 0 }}</small></div>
+    <div class="metric"><span>面板连接</span><strong>{{ overview?.servers.total ?? servers.length }}</strong><small>已启用 {{ overview?.servers.enabled ?? enabledServers }}</small></div>
+    <div class="metric"><span>卡密总数</span><strong>{{ overview?.cards.total ?? cards.total }}</strong><small>未使用 {{ overview?.cards.unused ?? unusedCards }}</small></div>
   </div>
 
   <div class="panel list-panel">
@@ -176,15 +187,19 @@ onMounted(loadDashboard);
     <div class="status-strip">
       <div>
         <span>在线支付</span>
-        <strong>{{ enabledPaymentChannels ? `已启用 ${enabledPaymentChannels} 个通道` : '未启用' }}</strong>
+        <strong>{{ (overview?.payments.enabledChannels ?? enabledPaymentChannels) ? `已启用 ${overview?.payments.enabledChannels ?? enabledPaymentChannels} 个通道` : '未启用' }}</strong>
       </div>
       <div>
         <span>面板连接</span>
-        <strong>{{ enabledServers }}/{{ servers.length }} 可用</strong>
+        <strong>{{ overview?.servers.enabled ?? enabledServers }}/{{ overview?.servers.total ?? servers.length }} 可用</strong>
       </div>
       <div>
         <span>路由节点</span>
-        <strong>{{ enabledNodes }}/{{ serviceNodes.length }} 启用</strong>
+        <strong>{{ overview?.serviceNodes.enabled ?? enabledNodes }}/{{ overview?.serviceNodes.total ?? serviceNodes.length }} 启用</strong>
+      </div>
+      <div>
+        <span>待支付订单</span>
+        <strong>{{ overview?.payments.pendingOrders ?? '-' }} 单</strong>
       </div>
     </div>
   </div>

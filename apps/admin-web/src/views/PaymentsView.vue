@@ -301,31 +301,37 @@ onMounted(loadChannels);
         <el-button :loading="loading" @click="loadChannels">刷新</el-button>
       </div>
     </div>
-    <el-table :data="channels" v-loading="loading" style="width: 100%">
-      <el-table-column label="名称" min-width="140"><template #default="{ row }: { row: PaymentChannel }">{{ row.name }}</template></el-table-column>
-      <el-table-column label="支付方式" width="130"><template #default="{ row }: { row: PaymentChannel }">{{ providerName(row.provider) }}</template></el-table-column>
-      <el-table-column label="通道模式" width="120"><template #default="{ row }: { row: PaymentChannel }">{{ channelModeLabel(row) }}</template></el-table-column>
-      <el-table-column label="密钥" width="100"><template #default="{ row }: { row: PaymentChannel }">{{ secretState(row) }}</template></el-table-column>
-      <el-table-column label="状态" width="100">
-        <template #default="{ row }: { row: PaymentChannel }">
+    <div v-loading="loading" class="entity-card-grid payment-channel-grid">
+      <section v-for="channel in channels" :key="channel.id" class="entity-card payment-channel-card">
+        <div class="entity-card-head">
+          <div>
+            <strong>{{ channel.name }}</strong>
+            <span>{{ providerName(channel.provider) }} / {{ channelModeLabel(channel) }}</span>
+          </div>
           <el-switch
-            v-model="row.enabled"
-            :loading="togglingIds.has(row.id)"
+            v-model="channel.enabled"
+            :loading="togglingIds.has(channel.id)"
             inline-prompt
             active-text="启"
             inactive-text="停"
-            @change="(value: boolean | string | number) => toggleChannel(row, value)"
+            @change="(value: boolean | string | number) => toggleChannel(channel, value)"
           />
-        </template>
-      </el-table-column>
-      <el-table-column label="回调地址" min-width="260"><template #default="{ row }: { row: PaymentChannel }">{{ row.notifyUrl }}</template></el-table-column>
-      <el-table-column label="操作" width="150" fixed="right">
-        <template #default="{ row }: { row: PaymentChannel }">
-          <el-button size="small" @click="editChannel(row)">编辑</el-button>
-          <el-button size="small" type="danger" @click="removeChannel(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+        </div>
+        <div class="entity-card-stats">
+          <div><span>密钥</span><strong>{{ secretState(channel) }}</strong></div>
+          <div><span>排序</span><strong>{{ channel.sortOrder }}</strong></div>
+          <div><span>状态</span><strong>{{ channel.enabled ? '启用' : '停用' }}</strong></div>
+        </div>
+        <div class="entity-card-meta">
+          <span>回调地址：{{ channel.notifyUrl || channel.config.notifyUrl || '-' }}</span>
+        </div>
+        <div class="entity-card-actions">
+          <el-button size="small" @click="editChannel(channel)">编辑</el-button>
+          <el-button size="small" type="danger" @click="removeChannel(channel)">删除</el-button>
+        </div>
+      </section>
+      <div v-if="!channels.length && !loading" class="empty-panel entity-empty">暂无支付方式</div>
+    </div>
   </div>
 
   <el-dialog v-model="channelDialogVisible" :title="editingChannelId ? '编辑支付方式' : `新增${providerName(channelForm.provider)}`" width="860px" destroy-on-close>

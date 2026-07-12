@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { balanceAdjustSchema, customerUpsertSchema } from '@shiye/shared';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { balanceAdjustSchema, customerListQuerySchema, customerUpsertSchema } from '@shiye/shared';
 import type { z } from 'zod';
 import { AuthGuard } from '../../shared/auth.guard.js';
 import { CurrentUser } from '../../shared/current-user.decorator.js';
@@ -15,8 +15,8 @@ export class CustomersController {
   @Get('admin/customers')
   @UseGuards(AuthGuard)
   @Roles('admin')
-  list() {
-    return this.customers.list();
+  list(@Query(new ZodValidationPipe(customerListQuerySchema)) query: z.infer<typeof customerListQuerySchema>) {
+    return this.customers.list(query);
   }
 
   @Post('admin/customers')

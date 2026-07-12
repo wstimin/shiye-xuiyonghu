@@ -8,15 +8,15 @@
 - Node.js 20+
 - npm 10+
 - MySQL 8.0+ 或兼容版本
-- 可选：Nginx、Redis、systemd
+- 可选：Nginx、systemd
 
 生产服务器构建时不要使用 `npm ci --omit=dev`，前端和 TypeScript 构建需要 devDependencies。构建完成后可以再执行 `npm prune --omit=dev`。
 
 ## 2. 一键脚本部署
 
-服务器上直接执行，默认安装到 `/opt/shiye`，服务名 `shiye-api`。下面命令默认在 `root` 用户下执行；如果当前不是 `root`，请先切换到 `root` 用户。脚本会询问访问方式：选择跳过域名就是 `IP:3388` 访问；选择域名访问会继续输入域名，并可自动申请 HTTPS 证书。
+服务器上直接执行，默认安装到 `/opt/shiye`，服务名 `shiye-api`。下面命令默认在 `root` 用户下执行；如果当前不是 `root`，请先切换到 `root` 用户。脚本默认安装为 `IP:3388` 访问，安装完成后可通过 `shiye` 菜单第 6 项配置域名、Nginx 和 HTTPS。
 
-一键脚本默认按“精简运行目录”部署：构建阶段只获取必要项目文件，安装完成后会删除构建期才需要的文件。`/opt/shiye` 默认只保留运行必需项：
+一键脚本默认按“精简运行目录”部署：优先下载 Linux 预构建包，包不可用时回退源码构建。安装完成后会删除构建期才需要的文件，`/opt/shiye` 默认只保留运行必需项：
 
 - `.env`
 - `dist/admin-web`
@@ -31,7 +31,7 @@
 - `prisma/schema.prisma`
 - `prisma/migrations`
 
-README、部署文档、安装脚本、前端源码、后端源码、seed 文件、示例配置和 `.git` 默认不会保留在服务器运行目录。
+README、部署文档、安装脚本、前端源码、后端源码、seed 文件、示例配置和 `.git` 默认不会保留在服务器运行目录。预构建发布包本身会包含首次安装必需的 `.env.example` 和 `prisma/seed.ts`；它们会在安装完成后的运行目录清理阶段移除。
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh)"
@@ -55,7 +55,7 @@ shiye
 5. 查看运行日志
 6. 配置域名/Nginx/HTTPS
 7. 取消域名，仅使用 IP + 端口
-8. 重新构建前后端
+8. 更新/重装运行文件
 9. 执行数据库迁移
 10. 备份数据库和 .env
 11. 卸载项目
@@ -81,10 +81,10 @@ bash install.sh
 - 本机没有提供 `DATABASE_URL` 时，安装并初始化本机 MySQL
 - 生成 `.env`，包含随机密钥和随机后台初始密码
 - 执行 `npm ci`
-- 执行 `npm run install:prod`，完成数据库迁移、seed、类型检查、构建和部署检查
+- 执行 `npm run install:prod`。预构建包会完成数据库迁移、seed 和部署检查；源码部署会额外执行类型检查和构建
 - 执行 `npm prune --omit=dev`
 - 注册并启动 systemd 服务
-- 可选配置 Nginx 和 HTTPS
+- 可在安装后通过管理菜单配置 Nginx 和 HTTPS
 
 常用参数示例：
 
@@ -173,7 +173,9 @@ journalctl -u shiye-api -f
 
 仓库提供示例文件：`infra/nginx/shiye.conf`。
 
-如果项目部署在 `/opt/shiye`，修改 `server_name` 后可复制使用：
+当前版本由 Node.js 一个端口同时提供用户端、管理端和 API。Nginx 只需要把整个网站反向代理到 `http://127.0.0.1:3388`，不需要单独配置 `/api/`，也不需要直接托管 `dist/user-web` 或 `dist/admin-web`。
+
+修改示例文件里的 `server_name` 后可复制使用：
 
 ```bash
 cp infra/nginx/shiye.conf /etc/nginx/conf.d/shiye.conf
@@ -213,7 +215,7 @@ https://panel.example.com/payment/result?trade_no=订单号
 
 ## 7. 更新版本
 
-默认精简部署时，`/opt/shiye` 不是 Git 仓库，不能直接 `git pull`。推荐重新执行一键脚本，脚本会保留现有 `.env`，重新获取最新项目文件、迁移数据库、构建并重启服务：
+默认精简部署时，`/opt/shiye` 不是 Git 仓库，不能直接 `git pull`。推荐重新执行一键脚本，脚本会保留现有 `.env`，优先获取最新预构建包、迁移数据库、校验并重启服务；如果预构建包不可用，会回退源码构建：
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh)"
@@ -223,10 +225,10 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/
 
 - 保留：`/opt/shiye/.env`、现有 MySQL 数据库、已有业务数据、已有管理员密码。
 - 覆盖：除 `.env` 外的程序运行文件、前端构建产物、后端构建产物、依赖和 systemd 服务文件。
-- 自动执行：数据库迁移、seed 幂等初始化、构建检查、运行文件检查、服务重启和健康检查。
+- 自动执行：数据库迁移、seed 幂等初始化、运行文件检查、服务重启和健康检查；源码回退时会额外构建。
 - 不会执行：删除数据库、清空用户、清空订单、清空卡密、清空节点配置。
 
-如果上一次选择了域名/Nginx，更新时建议继续带同样域名参数，避免 `PUBLIC_WEB_URL` 被改回 IP + 端口：
+一键脚本默认不会在安装开头询问 Nginx。需要域名/HTTPS 时，安装完成后运行 `shiye`，选择第 6 项配置；也可以更新时显式带同样域名参数，避免 `PUBLIC_WEB_URL` 被改回 IP + 端口：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh | env DOMAIN=panel.example.com ENABLE_NGINX=yes ENABLE_HTTPS=yes CERTBOT_EMAIL=admin@example.com bash

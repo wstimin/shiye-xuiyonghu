@@ -22,12 +22,11 @@ if (userIndex) {
 }
 
 if (nginxConfig) {
-  requireMatch(nginxConfig, /location\s+\/api\//, 'Nginx must proxy /api/.');
-  requireMatch(nginxConfig, /proxy_pass\s+http:\/\/127\.0\.0\.1:3388\/api\//, 'Nginx /api/ proxy target must preserve the API prefix.');
-  requireMatch(nginxConfig, /location\s+=\s+\/admin\s*{[\s\S]*return\s+301\s+\/admin\//, 'Nginx must redirect /admin to /admin/.');
-  requireMatch(nginxConfig, /location\s+\/admin\/assets\//, 'Nginx must serve admin assets under /admin/assets/.');
-  requireMatch(nginxConfig, /location\s+\/admin\/\s*{[\s\S]*try_files[\s\S]*\/admin\/index\.html/, 'Nginx must fallback admin routes to /admin/index.html.');
-  requireMatch(nginxConfig, /location\s+\/\s*{[\s\S]*try_files[\s\S]*\/index\.html/, 'Nginx must fallback user routes to /index.html.');
+  requireMatch(nginxConfig, /location\s+\/\s*{/, 'Nginx must proxy the whole site from /.');
+  requireMatch(nginxConfig, /proxy_pass\s+http:\/\/127\.0\.0\.1:3388\s*;/, 'Nginx must proxy the whole site to the Node service on 3388.');
+  forbidMatch(nginxConfig, /proxy_pass\s+http:\/\/127\.0\.0\.1:3388\/api\//, 'Nginx must not require a separate /api/ proxy.');
+  forbidMatch(nginxConfig, /root\s+\/opt\/shiye\/dist\/user-web/, 'Nginx should not serve frontend static files directly.');
+  forbidMatch(nginxConfig, /alias\s+\/opt\/shiye\/dist\/admin-web/, 'Nginx should not require admin static aliases.');
 }
 
 if (errors.length) {

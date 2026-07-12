@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { renewalSchema, userRenewalSchema } from '@shiye/shared';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { balanceLogListQuerySchema, clearHistorySchema, rechargeOrderListQuerySchema, renewalSchema, userRenewalSchema } from '@shiye/shared';
 import type { z } from 'zod';
 import { AuthGuard } from '../../shared/auth.guard.js';
 import { CurrentUser } from '../../shared/current-user.decorator.js';
@@ -15,22 +15,32 @@ export class FinanceController {
   @Get('admin/recharge-orders')
   @UseGuards(AuthGuard)
   @Roles('admin')
-  rechargeOrders() { return this.finance.rechargeOrders(); }
+  rechargeOrders(@Query(new ZodValidationPipe(rechargeOrderListQuerySchema)) query: z.infer<typeof rechargeOrderListQuerySchema>) {
+    return this.finance.rechargeOrders(query);
+  }
 
   @Get('admin/balance-logs')
   @UseGuards(AuthGuard)
   @Roles('admin')
-  balanceLogs() { return this.finance.balanceLogs(); }
+  balanceLogs(@Query(new ZodValidationPipe(balanceLogListQuerySchema)) query: z.infer<typeof balanceLogListQuerySchema>) {
+    return this.finance.balanceLogs(query);
+  }
 
   @Delete('admin/recharge-orders/history')
   @UseGuards(AuthGuard)
   @Roles('admin')
-  clearRechargeOrderHistory() { return this.finance.clearRechargeOrderHistory(); }
+  clearRechargeOrderHistory(@Body(new ZodValidationPipe(clearHistorySchema)) body: z.infer<typeof clearHistorySchema>) {
+    if (body.confirmText !== 'CLEAR_RECHARGE_HISTORY') throw new BadRequestException('Confirmation text mismatch');
+    return this.finance.clearRechargeOrderHistoryRange(body.from, body.to);
+  }
 
   @Delete('admin/balance-logs/history')
   @UseGuards(AuthGuard)
   @Roles('admin')
-  clearBalanceLogHistory() { return this.finance.clearBalanceLogHistory(); }
+  clearBalanceLogHistory(@Body(new ZodValidationPipe(clearHistorySchema)) body: z.infer<typeof clearHistorySchema>) {
+    if (body.confirmText !== 'CLEAR_BALANCE_HISTORY') throw new BadRequestException('Confirmation text mismatch');
+    return this.finance.clearBalanceLogHistoryRange(body.from, body.to);
+  }
 
   @Post('user/renewals')
   @UseGuards(AuthGuard)

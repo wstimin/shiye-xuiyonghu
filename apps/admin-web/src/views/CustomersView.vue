@@ -29,6 +29,7 @@ type Customer = {
 };
 
 type ServiceNode = { id: string; name: string; server?: { name: string } };
+type PageResult<T> = { items: T[]; page: number; pageSize: number; total: number };
 type CleanupResult = {
   skipped?: boolean;
   deleted?: boolean;
@@ -94,39 +95,54 @@ const renewingIds = ref<Set<string>>(new Set());
 const trafficIds = ref<Set<string>>(new Set());
 const resettingTrafficIds = ref<Set<string>>(new Set());
 const deletingServiceNodeIds = ref<Set<string>>(new Set());
-const searchQuery = ref('');
+const togglingCustomerIds = ref<Set<string>>(new Set());
+const customerTotal = ref(0);
+const customerFilters = reactive({ keyword: '', status: '', balanceMin: undefined as number | undefined, balanceMax: undefined as number | undefined });
+const customerPage = reactive({ page: 1, pageSize: 20 });
 const editingCustomerId = ref('');
 const customerDialogVisible = ref(false);
 const bindDialogVisible = ref(false);
 const editNodeDialogVisible = ref(false);
 const balanceDialogVisible = ref(false);
+const customerNodeDrawerVisible = ref(false);
 const customerForm = reactive({ name: '', loginUsername: '', loginPassword: '', email: '', phone: '', balance: 0, status: 'active' as 'active' | 'disabled', remark: '' });
 const bindForm = reactive({ customerId: '', serviceNodeId: '', xuiEmail: '', expireAt: defaultExpireAt(), trafficLimitGb: undefined as number | undefined });
 const nodeEditForm = reactive({ customerId: '', customerNodeId: '', serviceNodeId: '', xuiEmail: '', expireAt: '', trafficLimitGb: undefined as number | undefined });
 const balanceForm = reactive({ customerId: '', mode: 'add' as 'add' | 'subtract' | 'set', amount: 0, remark: '' });
 const renewMonths = ref<Record<string, number>>({});
-const activePanels = ref(['customers']);
+const selectedCustomerForNodes = ref<Customer | null>(null);
 
 const selectedCustomer = computed(() => customers.value.find((item) => item.id === bindForm.customerId));
 const activeCustomerCount = computed(() => customers.value.filter((item) => item.status === 'active').length);
 const boundNodeCount = computed(() => customers.value.reduce((total, item) => total + (item.nodes?.length || 0), 0));
 const activeBoundNodeCount = computed(() => customers.value.reduce((total, item) => total + (item.nodes?.filter((node) => node.status === 'active').length || 0), 0));
 const expiredBoundNodeCount = computed(() => customers.value.reduce((total, item) => total + (item.nodes?.filter((node) => isExpiredNode(node)).length || 0), 0));
-const filteredCustomers = computed(() => {
-  const keyword = searchQuery.value.trim().toLowerCase();
-  if (!keyword) return customers.value;
-  return customers.value.filter((customer) => customerSearchText(customer).includes(keyword));
+const customerRangeText = computed(() => {
+  if (!customerTotal.value) return '0 / 0';
+  const start = (customerPage.page - 1) * customerPage.pageSize + 1;
+  const end = Math.min(customerPage.page * customerPage.pageSize, customerTotal.value);
+  return `${start}-${end} / ${customerTotal.value}`;
 });
 
-async function loadCustomers() {
+async function loadCustomers(resetPage = false) {
+  if (resetPage) customerPage.page = 1;
   loading.value = true;
   error.value = '';
   try {
+    const params = customerQueryParams();
     const [customerResult, nodeResult] = await Promise.all([
-      api<{ items: Customer[] }>('/api/admin/customers'),
+      api<PageResult<Customer>>(`/api/admin/customers?${params.toString()}`),
       api<ServiceNode[]>('/api/admin/service-nodes')
     ]);
     customers.value = customerResult.items;
+    customerTotal.value = customerResult.total;
+    customerPage.page = customerResult.page;
+    customerPage.pageSize = customerResult.pageSize;
+    if (selectedCustomerForNodes.value) {
+      const refreshed = customerResult.items.find((item) => item.id === selectedCustomerForNodes.value?.id) || null;
+      selectedCustomerForNodes.value = refreshed;
+      if (!refreshed) customerNodeDrawerVisible.value = false;
+    }
     serviceNodes.value = nodeResult;
     if (!bindForm.customerId && customerResult.items[0]) bindForm.customerId = customerResult.items[0].id;
     if (!balanceForm.customerId && customerResult.items[0]) balanceForm.customerId = customerResult.items[0].id;
@@ -136,6 +152,30 @@ async function loadCustomers() {
   } finally {
     loading.value = false;
   }
+}
+
+function customerQueryParams() {
+  const params = new URLSearchParams({ page: String(customerPage.page), pageSize: String(customerPage.pageSize) });
+  if (customerFilters.keyword.trim()) params.set('keyword', customerFilters.keyword.trim());
+  if (customerFilters.status) params.set('status', customerFilters.status);
+  if (customerFilters.balanceMin !== undefined) params.set('balanceMin', String(customerFilters.balanceMin));
+  if (customerFilters.balanceMax !== undefined) params.set('balanceMax', String(customerFilters.balanceMax));
+  return params;
+}
+
+function resetCustomerFilters() {
+  Object.assign(customerFilters, { keyword: '', status: '', balanceMin: undefined, balanceMax: undefined });
+  void loadCustomers(true);
+}
+
+function handleCustomerPageChange(page: number) {
+  customerPage.page = page;
+  void loadCustomers();
+}
+
+function handleCustomerPageSizeChange(pageSize: number) {
+  customerPage.pageSize = pageSize;
+  void loadCustomers(true);
 }
 
 async function saveCustomer() {
@@ -400,6 +440,11 @@ function openBalanceDialog(customer?: Customer) {
   balanceDialogVisible.value = true;
 }
 
+function openCustomerNodesDrawer(customer: Customer) {
+  selectedCustomerForNodes.value = customer;
+  customerNodeDrawerVisible.value = true;
+}
+
 function editCustomerNode(customer: Customer, node: CustomerNode) {
   Object.assign(nodeEditForm, {
     customerId: customer.id,
@@ -433,6 +478,26 @@ async function removeCustomer(customer: Customer) {
   ElMessage.success('用户已删除');
   if (editingCustomerId.value === customer.id) resetCustomerForm();
   await loadCustomers();
+}
+
+async function toggleCustomerStatus(customer: Customer, enabled: boolean | string | number) {
+  const previous = customer.status;
+  const nextStatus: Customer['status'] = Boolean(enabled) ? 'active' : 'disabled';
+  togglingCustomerIds.value = new Set(togglingCustomerIds.value).add(customer.id);
+  error.value = '';
+  try {
+    await api(`/api/admin/customers/${customer.id}`, { method: 'PATCH', body: { status: nextStatus } });
+    customer.status = nextStatus;
+    ElMessage.success(nextStatus === 'active' ? '用户已启用' : '用户已禁用');
+  } catch (err) {
+    customer.status = previous;
+    error.value = err instanceof Error ? err.message : '更新用户状态失败';
+    ElMessage.error(error.value);
+  } finally {
+    const next = new Set(togglingCustomerIds.value);
+    next.delete(customer.id);
+    togglingCustomerIds.value = next;
+  }
 }
 
 function resetCustomerForm() {
@@ -525,18 +590,6 @@ function formatRemoteLastOnline(value: unknown) {
   return new Date(time * 1000).toLocaleString('zh-CN', { hour12: false });
 }
 
-function customerSearchText(customer: Customer) {
-  return [
-    customer.name,
-    customer.loginUsername,
-    customer.email,
-    customer.phone,
-    customer.status,
-    customer.remark,
-    ...(customer.nodes || []).flatMap((node) => [node.xuiEmail, node.status, node.serviceNode?.name, node.serviceNode?.server?.name])
-  ].filter(Boolean).join(' ').toLowerCase();
-}
-
 onMounted(loadCustomers);
 </script>
 
@@ -547,13 +600,13 @@ onMounted(loadCustomers);
       <p>管理面板登录用户、余额和本地节点绑定；绑定只更新路由节点已有的 3x-ui 客户端。</p>
     </div>
     <div class="page-actions">
-      <el-button :loading="loading" @click="loadCustomers"><RefreshCw :size="15" />刷新</el-button>
+      <el-button :loading="loading" @click="loadCustomers()"><RefreshCw :size="15" />刷新</el-button>
     </div>
   </div>
   <el-alert v-if="error" class="page-alert" :title="error" type="error" show-icon :closable="false" />
 
   <div class="metric-grid compact-metrics">
-    <div class="metric"><span>面板用户</span><strong>{{ customers.length }}</strong><small>启用 {{ activeCustomerCount }}</small></div>
+    <div class="metric"><span>面板用户</span><strong>{{ customerTotal }}</strong><small>当前页启用 {{ activeCustomerCount }}</small></div>
     <div class="metric"><span>绑定节点</span><strong>{{ boundNodeCount }}</strong><small>启用 {{ activeBoundNodeCount }}</small></div>
     <div class="metric"><span>到期绑定</span><strong>{{ expiredBoundNodeCount }}</strong><small>到期后会同步停用</small></div>
     <div class="metric"><span>余额操作</span><strong>手动</strong><small>支持增减和设置</small></div>
@@ -569,90 +622,119 @@ onMounted(loadCustomers);
       </div>
     </div>
     <div class="filter-bar">
-      <el-input v-model="searchQuery" clearable placeholder="搜索用户、账号、联系方式、绑定节点" style="max-width: 360px">
+      <el-input v-model="customerFilters.keyword" clearable placeholder="搜索用户、账号、联系方式、绑定节点" style="max-width: 360px" @keyup.enter="loadCustomers(true)">
         <template #prefix><Search :size="15" /></template>
       </el-input>
-      <span class="filter-summary">显示 {{ filteredCustomers.length }} / {{ customers.length }}</span>
+      <el-select v-model="customerFilters.status" clearable placeholder="状态" style="width: 130px" @change="loadCustomers(true)">
+        <el-option label="启用" value="active" />
+        <el-option label="禁用" value="disabled" />
+      </el-select>
+      <el-input-number v-model="customerFilters.balanceMin" :min="0" :precision="2" placeholder="最低余额" controls-position="right" style="width: 136px" @change="loadCustomers(true)" />
+      <el-input-number v-model="customerFilters.balanceMax" :min="0" :precision="2" placeholder="最高余额" controls-position="right" style="width: 136px" @change="loadCustomers(true)" />
+      <el-button @click="resetCustomerFilters"><RotateCcw :size="15" />重置</el-button>
+      <el-button type="primary" :loading="loading" @click="loadCustomers(true)"><Search :size="15" />查询</el-button>
+      <span class="filter-summary">显示 {{ customerRangeText }}</span>
     </div>
-    <el-collapse v-model="activePanels" class="admin-collapse">
-      <el-collapse-item name="customers">
-        <template #title>
-          <div class="collapse-title"><strong>用户列表</strong><span>{{ filteredCustomers.length }} 个用户</span></div>
-        </template>
-        <el-table :data="filteredCustomers" v-loading="loading" style="width: 100%" row-key="id">
-          <el-table-column type="expand" width="44">
-            <template #default="{ row }: { row: Customer }">
-              <div class="expanded-node-panel">
-                <div class="expanded-node-head">
-                  <strong>绑定节点</strong>
-                  <el-button size="small" type="primary" plain @click="openBindDialog(row)"><Link2 :size="15" />绑定节点</el-button>
-                </div>
-                <div v-if="row.nodes?.length" class="node-list expanded-node-list">
-                  <div v-for="node in row.nodes" :key="node.id" class="node-row customer-node-row">
-                    <div class="node-meta">
-                      <strong class="node-title-line">
-                        {{ node.serviceNode?.name || node.xuiEmail }}
-                        <el-tag size="small" :type="node.status === 'active' ? 'success' : 'info'">{{ node.status === 'active' ? '启用' : '停用' }}</el-tag>
-                        <el-tag size="small" :type="nodeExpireStatus(node).type">{{ nodeExpireStatus(node).label }}</el-tag>
-                      </strong>
-                      <span>{{ node.serviceNode?.server?.name || '-' }} / {{ node.xuiEmail }}</span>
-                      <span>到期 {{ formatDate(node.expireAt) }} · 流量 {{ node.trafficLimitGb ?? '-' }} GB · 同步 {{ formatDate(node.lastSyncedAt) }}</span>
-                    </div>
-                    <div class="node-actions node-action-grid">
-                      <div class="node-action-group renew-action">
-                        <span class="action-group-label">续费</span>
-                        <el-select v-model="renewMonths[node.id]" size="small" style="width: 82px">
-                          <el-option :value="1" label="1月" />
-                          <el-option :value="3" label="3月" />
-                          <el-option :value="6" label="6月" />
-                          <el-option :value="12" label="12月" />
-                        </el-select>
-                        <el-button size="small" :loading="renewingIds.has(node.id)" @click="renewNode(row, node)">续费</el-button>
-                      </div>
-                      <div class="node-action-group remote-action">
-                        <span class="action-group-label">远端</span>
-                        <el-button size="small" :loading="syncingIds.has(node.id)" @click="syncNode(row, node)"><RefreshCw :size="15" />同步</el-button>
-                        <el-button size="small" :loading="trafficIds.has(node.id)" @click="showNodeTraffic(row, node)"><Activity :size="15" />流量</el-button>
-                        <el-button size="small" :loading="resettingTrafficIds.has(node.id)" @click="resetNodeTraffic(row, node)"><RotateCcw :size="15" />重置</el-button>
-                      </div>
-                      <div class="node-action-group manage-action">
-                        <span class="action-group-label">本地绑定</span>
-                        <el-button size="small" @click="editCustomerNode(row, node)"><Edit3 :size="15" />编辑</el-button>
-                        <el-button size="small" @click="unbindNode(row, node)"><Unlink :size="15" />解绑</el-button>
-                      </div>
-                      <div class="node-action-group danger-action">
-                        <span class="action-group-label">服务节点</span>
-                        <el-button size="small" type="danger" plain :loading="deletingServiceNodeIds.has(node.id)" @click="deleteBoundServiceNode(row, node)"><ServerOff :size="15" />删除本地和远端</el-button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div v-else class="empty-panel compact-empty">该用户还没有绑定节点</div>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="name" label="名称" min-width="130" />
-          <el-table-column prop="loginUsername" label="登录账号" min-width="130" />
-          <el-table-column prop="balance" label="余额" width="110" />
-          <el-table-column label="绑定" width="90"><template #default="{ row }: { row: Customer }">{{ row.nodes?.length || 0 }} 个</template></el-table-column>
-          <el-table-column label="状态" width="90">
-            <template #default="{ row }: { row: Customer }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '启用' : '禁用' }}</el-tag></template>
-          </el-table-column>
-          <el-table-column label="创建时间" min-width="170"><template #default="{ row }: { row: Customer }">{{ formatDate(row.createdAt) }}</template></el-table-column>
-          <el-table-column label="操作" width="250" fixed="right">
-            <template #default="{ row }: { row: Customer }">
-              <div class="row-actions">
-                <el-button size="small" @click="openBindDialog(row)"><Link2 :size="15" />绑定</el-button>
-                <el-button size="small" @click="openBalanceDialog(row)"><Wallet :size="15" />余额</el-button>
-                <el-button size="small" @click="editCustomer(row)"><Edit3 :size="15" />编辑</el-button>
-                <el-button size="small" type="danger" plain @click="removeCustomer(row)"><Trash2 :size="15" />删除</el-button>
-              </div>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-collapse-item>
-    </el-collapse>
+    <div v-loading="loading" class="entity-card-grid customer-card-grid">
+      <article v-for="customer in customers" :key="customer.id" class="entity-card customer-card">
+        <div class="entity-card-head">
+          <div>
+            <strong>{{ customer.name }}</strong>
+            <span>{{ customer.loginUsername }}</span>
+          </div>
+          <el-switch :model-value="customer.status === 'active'" size="small" :loading="togglingCustomerIds.has(customer.id)" @change="(value: boolean | string | number) => toggleCustomerStatus(customer, value)" />
+        </div>
+        <div class="entity-card-stats">
+          <div><span>余额</span><strong>{{ customer.balance }}</strong></div>
+          <div><span>绑定</span><strong>{{ customer.nodes?.length || 0 }} 个</strong></div>
+          <div><span>创建</span><strong>{{ formatDate(customer.createdAt) }}</strong></div>
+        </div>
+        <div class="entity-card-meta">
+          <span>{{ customer.email || customer.phone || '未填写联系方式' }}</span>
+          <span v-if="customer.remark">{{ customer.remark }}</span>
+        </div>
+        <div class="entity-card-actions">
+          <el-button size="small" @click="openCustomerNodesDrawer(customer)"><Link2 :size="15" />节点</el-button>
+          <el-button size="small" @click="openBindDialog(customer)"><Link2 :size="15" />绑定</el-button>
+          <el-button size="small" @click="openBalanceDialog(customer)"><Wallet :size="15" />余额</el-button>
+          <el-button size="small" @click="editCustomer(customer)"><Edit3 :size="15" />编辑</el-button>
+          <el-button size="small" type="danger" plain @click="removeCustomer(customer)"><Trash2 :size="15" />删除</el-button>
+        </div>
+      </article>
+      <div v-if="!customers.length && !loading" class="empty-panel entity-empty">暂无用户数据</div>
+    </div>
+    <div class="pagination-bar">
+      <el-pagination
+        background
+        layout="total, sizes, prev, pager, next, jumper"
+        :total="customerTotal"
+        :current-page="customerPage.page"
+        :page-size="customerPage.pageSize"
+        :page-sizes="[10, 20, 50, 100]"
+        @current-change="handleCustomerPageChange"
+        @size-change="handleCustomerPageSizeChange"
+      />
+    </div>
   </div>
+
+  <el-drawer v-model="customerNodeDrawerVisible" :title="selectedCustomerForNodes ? `${selectedCustomerForNodes.name} 的绑定节点` : '绑定节点'" size="min(820px, 92vw)" destroy-on-close>
+    <template v-if="selectedCustomerForNodes">
+      <div class="drawer-head-card">
+        <div>
+          <strong>{{ selectedCustomerForNodes.name }}</strong>
+          <span>{{ selectedCustomerForNodes.loginUsername }} · 余额 {{ selectedCustomerForNodes.balance }}</span>
+        </div>
+        <el-button size="small" type="primary" plain @click="openBindDialog(selectedCustomerForNodes)"><Link2 :size="15" />绑定节点</el-button>
+      </div>
+      <div v-if="selectedCustomerForNodes.nodes?.length" class="drawer-node-list">
+        <article v-for="node in selectedCustomerForNodes.nodes" :key="node.id" class="drawer-node-card entity-card">
+          <div class="entity-card-head">
+            <div>
+              <strong>{{ node.serviceNode?.name || node.xuiEmail }}</strong>
+              <span>{{ node.serviceNode?.server?.name || '-' }} / {{ node.xuiEmail }}</span>
+            </div>
+            <div class="tag-stack">
+              <el-tag size="small" :type="node.status === 'active' ? 'success' : 'info'">{{ node.status === 'active' ? '启用' : '停用' }}</el-tag>
+              <el-tag size="small" :type="nodeExpireStatus(node).type">{{ nodeExpireStatus(node).label }}</el-tag>
+            </div>
+          </div>
+          <div class="entity-card-stats">
+            <div><span>到期</span><strong>{{ formatDate(node.expireAt) }}</strong></div>
+            <div><span>流量</span><strong>{{ node.trafficLimitGb ?? '-' }} GB</strong></div>
+            <div><span>同步</span><strong>{{ formatDate(node.lastSyncedAt) }}</strong></div>
+          </div>
+          <div class="node-actions node-action-grid drawer-node-actions">
+            <div class="node-action-group renew-action">
+              <span class="action-group-label">续费</span>
+              <el-select v-model="renewMonths[node.id]" size="small" style="width: 82px">
+                <el-option :value="1" label="1月" />
+                <el-option :value="3" label="3月" />
+                <el-option :value="6" label="6月" />
+                <el-option :value="12" label="12月" />
+              </el-select>
+              <el-button size="small" :loading="renewingIds.has(node.id)" @click="renewNode(selectedCustomerForNodes, node)">续费</el-button>
+            </div>
+            <div class="node-action-group remote-action">
+              <span class="action-group-label">远端</span>
+              <el-button size="small" :loading="syncingIds.has(node.id)" @click="syncNode(selectedCustomerForNodes, node)"><RefreshCw :size="15" />同步</el-button>
+              <el-button size="small" :loading="trafficIds.has(node.id)" @click="showNodeTraffic(selectedCustomerForNodes, node)"><Activity :size="15" />流量</el-button>
+              <el-button size="small" :loading="resettingTrafficIds.has(node.id)" @click="resetNodeTraffic(selectedCustomerForNodes, node)"><RotateCcw :size="15" />重置</el-button>
+            </div>
+            <div class="node-action-group manage-action">
+              <span class="action-group-label">本地绑定</span>
+              <el-button size="small" @click="editCustomerNode(selectedCustomerForNodes, node)"><Edit3 :size="15" />编辑</el-button>
+              <el-button size="small" @click="unbindNode(selectedCustomerForNodes, node)"><Unlink :size="15" />解绑</el-button>
+            </div>
+            <div class="node-action-group danger-action">
+              <span class="action-group-label">服务节点</span>
+              <el-button size="small" type="danger" plain :loading="deletingServiceNodeIds.has(node.id)" @click="deleteBoundServiceNode(selectedCustomerForNodes, node)"><ServerOff :size="15" />删除本地和远端</el-button>
+            </div>
+          </div>
+        </article>
+      </div>
+      <div v-else class="empty-panel">该用户还没有绑定节点</div>
+    </template>
+  </el-drawer>
 
   <el-dialog v-model="customerDialogVisible" :title="editingCustomerId ? '编辑用户' : '新增用户'" width="720px" destroy-on-close>
     <el-form :model="customerForm" label-width="82px" class="dialog-form-grid">

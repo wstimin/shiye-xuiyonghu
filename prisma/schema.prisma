@@ -100,6 +100,7 @@ model XuiServer {
 
   serviceNodes ServiceNode[]
   syncLogs     SyncLog[]
+  socksNodes   SocksNode[]
 
   @@index([enabled])
   @@map("xui_servers")
@@ -161,10 +162,16 @@ model SocksNode {
   passwordEnc String? @db.Text
   enabled    Boolean  @default(true)
   remark     String?  @db.Text
+  sourceServerId String?
+  remoteOutboundTag String? @db.VarChar(120)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  sourceServer XuiServer? @relation(fields: [sourceServerId], references: [id], onDelete: SetNull)
+
   @@index([enabled])
+  @@index([sourceServerId])
+  @@index([remoteOutboundTag])
   @@map("socks_nodes")
 }
 

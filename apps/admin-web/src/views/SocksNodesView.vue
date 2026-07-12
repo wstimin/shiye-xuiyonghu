@@ -13,22 +13,32 @@ type SocksNode = {
   enabled: boolean;
   remark?: string | null;
   hasPassword?: boolean;
+  sourceServerId?: string | null;
+  remoteOutboundTag?: string | null;
 };
 type ServiceNode = { id: string; config?: { socksRelayEnabled?: boolean; socksNodeId?: string | null } | null };
+type XuiServer = { id: string; name: string; baseUrl: string; enabled: boolean };
+type SocksSyncResult = { remoteSocksFound: number; remoteSocksImported: number };
 
 const nodes = ref<SocksNode[]>([]);
 const serviceNodes = ref<ServiceNode[]>([]);
+const servers = ref<XuiServer[]>([]);
 const loading = ref(false);
 const saving = ref(false);
+const syncingRemote = ref(false);
+const togglingIds = ref<Set<string>>(new Set());
 const error = ref('');
 const searchQuery = ref('');
+const syncServerId = ref('');
 const editingId = ref('');
 const dialogVisible = ref(false);
 const form = reactive({ name: '', host: '', port: 1080, username: '', password: '', enabled: true, remark: '' });
 
 const enabledNodeCount = computed(() => nodes.value.filter((node) => node.enabled).length);
 const authedNodeCount = computed(() => nodes.value.filter((node) => node.username || node.hasPassword).length);
+const importedNodeCount = computed(() => nodes.value.filter((node) => node.sourceServerId || node.remoteOutboundTag).length);
 const usedNodeCount = computed(() => nodes.value.filter((node) => usageCount(node.id) > 0).length);
+const enabledServers = computed(() => servers.value.filter((server) => server.enabled));
 const filteredNodes = computed(() => {
   const keyword = searchQuery.value.trim().toLowerCase();
   if (!keyword) return nodes.value;
@@ -39,12 +49,16 @@ async function loadNodes() {
   loading.value = true;
   error.value = '';
   try {
-    const [socksResult, serviceResult] = await Promise.all([
+    const [socksResult, serviceResult, serverResult] = await Promise.all([
       api<SocksNode[]>('/api/admin/socks-nodes'),
-      api<ServiceNode[]>('/api/admin/service-nodes')
+      api<ServiceNode[]>('/api/admin/service-nodes'),
+      api<XuiServer[]>('/api/admin/xui-servers')
     ]);
     nodes.value = socksResult;
     serviceNodes.value = serviceResult;
+    servers.value = serverResult;
+    const firstEnabledServer = enabledServers.value[0];
+    if (!syncServerId.value && firstEnabledServer) syncServerId.value = firstEnabledServer.id;
   } catch (err) {
     error.value = err instanceof Error ? err.message : '加载出站节点失败';
   } finally {
@@ -69,6 +83,27 @@ async function saveNode() {
   }
 }
 
+async function syncRemoteSocks() {
+  if (!syncServerId.value) {
+    ElMessage.warning('请先选择要导入的 3x-ui 服务器');
+    return;
+  }
+  const server = servers.value.find((item) => item.id === syncServerId.value);
+  await ElMessageBox.confirm(`确认从“${server?.name || '选中的服务器'}”导入远端 SOCKS 出站节点？此操作只写入本地出站列表，不会新建远端规则。`, '导入远端 SOCKS', { type: 'warning' });
+  syncingRemote.value = true;
+  error.value = '';
+  try {
+    const result = await api<SocksSyncResult>(`/api/admin/xui-servers/${syncServerId.value}/sync-socks`, { method: 'POST' });
+    ElMessage.success(`远端 SOCKS 导入完成：发现 ${result.remoteSocksFound}，导入/更新 ${result.remoteSocksImported}`);
+    await loadNodes();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '导入远端 SOCKS 失败';
+    ElMessage.error(error.value);
+  } finally {
+    syncingRemote.value = false;
+  }
+}
+
 function openDialog() {
   resetForm();
   dialogVisible.value = true;
@@ -89,10 +124,31 @@ function editNode(node: SocksNode) {
 }
 
 async function removeNode(node: SocksNode) {
-  await ElMessageBox.confirm(`确认删除出站节点“${node.name}”？正在被路由节点使用时，后端会拒绝删除。`, '删除确认', { type: 'warning' });
+  const remoteHint = node.sourceServerId && node.remoteOutboundTag ? '该节点为导入节点，删除时会同步删除远端对应 SOCKS 出站和引用规则。' : '该节点为手动创建节点，只会删除本地记录。';
+  await ElMessageBox.confirm(`确认删除出站节点“${node.name}”？${remoteHint} 正在被路由节点使用时，后端会拒绝删除。`, '删除确认', { type: 'warning' });
   await api(`/api/admin/socks-nodes/${node.id}`, { method: 'DELETE' });
   ElMessage.success('出站节点已删除');
   await loadNodes();
+}
+
+async function toggleNodeEnabled(node: SocksNode, enabled: boolean | string | number) {
+  const nextEnabled = Boolean(enabled);
+  const previous = node.enabled;
+  togglingIds.value = new Set(togglingIds.value).add(node.id);
+  error.value = '';
+  try {
+    await api(`/api/admin/socks-nodes/${node.id}`, { method: 'PATCH', body: { enabled: nextEnabled } });
+    node.enabled = nextEnabled;
+    ElMessage.success(nextEnabled ? '出站节点已启用' : '出站节点已停用');
+  } catch (err) {
+    node.enabled = previous;
+    error.value = err instanceof Error ? err.message : '更新出站节点状态失败';
+    ElMessage.error(error.value);
+  } finally {
+    const next = new Set(togglingIds.value);
+    next.delete(node.id);
+    togglingIds.value = next;
+  }
 }
 
 function resetForm() {
@@ -113,8 +169,13 @@ function usageCount(id: string) {
   return serviceNodes.value.filter((node) => node.config?.socksRelayEnabled && node.config?.socksNodeId === id).length;
 }
 
+function serverName(id?: string | null) {
+  if (!id) return '';
+  return servers.value.find((server) => server.id === id)?.name || id;
+}
+
 function socksSearchText(node: SocksNode) {
-  return [node.name, node.host, node.port, node.username, node.enabled ? '启用' : '停用', node.remark, usageCount(node.id)].filter(Boolean).join(' ').toLowerCase();
+  return [node.name, node.host, node.port, node.username, node.enabled ? '启用' : '停用', node.remark, node.remoteOutboundTag, serverName(node.sourceServerId), usageCount(node.id)].filter(Boolean).join(' ').toLowerCase();
 }
 
 onMounted(loadNodes);
@@ -127,12 +188,17 @@ onMounted(loadNodes);
       <p>维护 SOCKS 出站中转节点；路由节点启用出站后会引用这里的配置。</p>
     </div>
     <div class="page-actions">
+      <el-select v-model="syncServerId" placeholder="选择服务器" style="width: 220px">
+        <el-option v-for="server in enabledServers" :key="server.id" :label="server.name" :value="server.id" />
+      </el-select>
+      <el-button type="primary" :loading="syncingRemote" :disabled="!syncServerId" @click="syncRemoteSocks"><RefreshCw :size="15" />从远端导入</el-button>
       <el-button :loading="loading" @click="loadNodes"><RefreshCw :size="15" />刷新</el-button>
     </div>
   </div>
   <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
 
   <div class="metric-grid compact-metrics">
+    <div class="metric"><span>导入节点</span><strong>{{ importedNodeCount }}</strong><small>来自远端 SOCKS 出站</small></div>
     <div class="metric"><span>出站节点</span><strong>{{ nodes.length }}</strong><small>启用 {{ enabledNodeCount }}</small></div>
     <div class="metric"><span>认证节点</span><strong>{{ authedNodeCount }}</strong><small>配置账号或密码</small></div>
     <div class="metric"><span>被引用</span><strong>{{ usedNodeCount }}</strong><small>正在被路由节点使用</small></div>
@@ -152,34 +218,36 @@ onMounted(loadNodes);
       </el-input>
       <span class="filter-summary">显示 {{ filteredNodes.length }} / {{ nodes.length }}</span>
     </div>
-    <el-table :data="filteredNodes" v-loading="loading" style="width: 100%">
-      <el-table-column prop="name" label="名称" min-width="140" />
-      <el-table-column prop="host" label="地址" min-width="180" />
-      <el-table-column prop="port" label="端口" width="90" />
-      <el-table-column label="认证" width="130">
-        <template #default="{ row }: { row: SocksNode }">
-          <el-tag v-if="row.username || row.hasPassword" size="small" type="success">账号密码</el-tag>
-          <el-tag v-else size="small" type="info">无认证</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="引用" width="100">
-        <template #default="{ row }: { row: SocksNode }">
-          <el-tag :type="usageCount(row.id) ? 'warning' : 'info'" size="small">{{ usageCount(row.id) }} 个</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }: { row: SocksNode }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template>
-      </el-table-column>
-      <el-table-column prop="remark" label="备注" min-width="160" />
-      <el-table-column label="操作" width="220" fixed="right">
-        <template #default="{ row }: { row: SocksNode }">
-          <div class="row-actions">
-            <el-button size="small" @click="editNode(row)"><Edit3 :size="15" />编辑</el-button>
-            <el-button size="small" type="danger" plain @click="removeNode(row)"><Trash2 :size="15" />删除</el-button>
+    <div v-loading="loading" class="entity-card-grid socks-card-grid">
+      <article v-for="node in filteredNodes" :key="node.id" class="entity-card socks-card">
+        <div class="entity-card-head">
+          <div>
+            <strong>{{ node.name }}</strong>
+            <span>{{ node.host }}:{{ node.port }}</span>
           </div>
-        </template>
-      </el-table-column>
-    </el-table>
+          <div class="tag-stack">
+            <el-switch v-model="node.enabled" size="small" :loading="togglingIds.has(node.id)" @change="(value: boolean | string | number) => toggleNodeEnabled(node, value)" />
+            <el-tag size="small" :type="node.sourceServerId || node.remoteOutboundTag ? 'warning' : 'info'">{{ node.sourceServerId || node.remoteOutboundTag ? '导入' : '创建' }}</el-tag>
+            <el-tag v-if="node.username || node.hasPassword" size="small" type="success">账号密码</el-tag>
+            <el-tag v-else size="small" type="info">无认证</el-tag>
+          </div>
+        </div>
+        <div class="entity-card-stats">
+          <div><span>地址</span><strong>{{ node.host }}</strong></div>
+          <div><span>端口</span><strong>{{ node.port }}</strong></div>
+          <div><span>引用</span><strong>{{ usageCount(node.id) }} 个</strong></div>
+        </div>
+        <div class="entity-card-meta">
+          <span v-if="node.sourceServerId || node.remoteOutboundTag">来源：{{ serverName(node.sourceServerId) || '远端' }}<template v-if="node.remoteOutboundTag"> / {{ node.remoteOutboundTag }}</template></span>
+          <span>{{ node.remark || '暂无备注' }}</span>
+        </div>
+        <div class="entity-card-actions">
+          <el-button size="small" @click="editNode(node)"><Edit3 :size="15" />编辑</el-button>
+          <el-button size="small" type="danger" plain @click="removeNode(node)"><Trash2 :size="15" />删除</el-button>
+        </div>
+      </article>
+      <div v-if="!filteredNodes.length && !loading" class="empty-panel entity-empty">暂无出站节点</div>
+    </div>
   </div>
 
   <el-dialog v-model="dialogVisible" :title="editingId ? '编辑出站节点' : '添加出站节点'" width="720px" destroy-on-close>

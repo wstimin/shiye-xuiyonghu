@@ -52,6 +52,11 @@ export class XuiController {
   @Roles('admin')
   syncServer(@Param('id') id: string) { return this.xui.syncServer(id); }
 
+  @Post('admin/xui-servers/:id/sync-socks')
+  @UseGuards(AuthGuard)
+  @Roles('admin')
+  syncServerSocksOutbounds(@Param('id') id: string) { return this.xui.syncServerSocksOutbounds(id); }
+
   @Post('admin/service-nodes/:id/sync')
   @UseGuards(AuthGuard)
   @Roles('admin')

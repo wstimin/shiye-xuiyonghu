@@ -104,6 +104,8 @@ function actionLabel(action: string) {
     'service-node-reset-traffic': '路由节点流量重置',
     'service-node-inbound-delete': '远端入站删除',
     'server-inbounds-import': '远端入站导入',
+    'server-socks-outbounds-import': '远端 SOCKS 出站导入',
+    'server-socks-outbound-delete': '远端 SOCKS 出站删除',
     'customer-node-sync': '用户绑定节点同步',
     'customer-node-links': '用户节点链接获取',
     'customer-node-delete': '远端客户端删除',

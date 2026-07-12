@@ -9,6 +9,7 @@ import { FinanceModule } from './finance/finance.module.js';
 import { HealthModule } from './health/health.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
 import { NodesModule } from './nodes/nodes.module.js';
+import { OverviewModule } from './overview/overview.module.js';
 import { PaymentsModule } from './payments/payments.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { SecurityModule } from './security/security.module.js';
@@ -30,6 +31,7 @@ import { XuiModule } from './xui/xui.module.js';
     DiagnosticsModule,
     NodesModule,
     XuiModule,
+    OverviewModule,
     CardsModule,
     FinanceModule,
     PaymentsModule,

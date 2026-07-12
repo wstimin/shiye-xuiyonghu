@@ -18,7 +18,8 @@
     "typecheck": "npm run build:packages && npm run typecheck:workspaces",
     "typecheck:workspaces": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
-    "start": "npm run start -w @shiye/api",
+    "start": "node scripts/panel-start.mjs",
+    "start:api": "npm run start -w @shiye/api",
     "install:check": "node scripts/install-check.mjs",
     "deploy:check": "node scripts/deploy-check.mjs",
     "install:prod": "node scripts/install.mjs",
@@ -31,8 +32,7 @@
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "mysql2": "^3.11.5",
-    "qrcode": "^1.5.4",
-    "redis": "^4.7.0"
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { moneySchema } from './common.js';
+import { moneySchema, paginationQuerySchema } from './common.js';
 
 export const paymentProviderSchema = z.enum(['alipay', 'wechat', 'epay', 'bepusdt']);
 
@@ -58,3 +58,36 @@ export const cardTemplateUpsertSchema = z.object({
   enabled: z.boolean().default(true),
   remark: z.string().trim().max(500).optional().or(z.literal(''))
 });
+
+export const clearHistorySchema = z.object({
+  from: z.coerce.date().optional(),
+  to: z.coerce.date(),
+  confirmText: z.string().trim().min(1).max(80)
+}).refine((value) => !value.from || value.from < value.to, {
+  message: 'from must be earlier than to',
+  path: ['from']
+});
+
+const dateRangeQuerySchema = z.object({
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional()
+}).refine((value) => !value.from || !value.to || value.from < value.to, {
+  message: 'from must be earlier than to',
+  path: ['from']
+});
+
+export const rechargeOrderListQuerySchema = paginationQuerySchema.extend({
+  status: z.enum(['pending', 'paid', 'closed', 'failed']).optional(),
+  provider: paymentChannelProviderSchema.optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional()
+}).refine((value) => !value.from || !value.to || value.from < value.to, {
+  message: 'from must be earlier than to',
+  path: ['from']
+});
+
+export const balanceLogListQuerySchema = paginationQuerySchema.extend({
+  type: z.enum(['card_redeem', 'recharge', 'renewal', 'admin_add', 'admin_subtract', 'admin_set', 'refund']).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional()
+}).and(dateRangeQuerySchema);

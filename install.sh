@@ -6,10 +6,13 @@ APP_NAME="${APP_NAME:-shiye-api}"
 APP_DIR="${APP_DIR:-/opt/shiye}"
 PORT="${PORT:-3388}"
 DEFAULT_REPO_URL="${DEFAULT_REPO_URL:-https://github.com/wstimin/shiye-3xuigl-L3.git}"
+DEFAULT_PACKAGE_URL="${DEFAULT_PACKAGE_URL:-https://github.com/wstimin/shiye-3xuigl-L3/releases/latest/download/shiye-xuiyonghu-oneport-1panel-baota.zip}"
+PACKAGE_URL="${PACKAGE_URL:-${DEFAULT_PACKAGE_URL}}"
+INSTALL_SOURCE="${INSTALL_SOURCE:-auto}"
 INSTALL_URL="${INSTALL_URL:-https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/install.sh}"
 UNINSTALL_URL="${UNINSTALL_URL:-https://raw.githubusercontent.com/wstimin/shiye-3xuigl-L3/main/uninstall.sh}"
 DOMAIN="${DOMAIN:-${SITE_DOMAIN:-}}"
-ENABLE_NGINX="${ENABLE_NGINX:-ask}"
+ENABLE_NGINX="${ENABLE_NGINX:-no}"
 ENABLE_HTTPS="${ENABLE_HTTPS:-ask}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
 
@@ -106,7 +109,7 @@ install_base_packages() {
   case "${PKG_MANAGER}" in
     apt) apt update ;;
   esac
-  install_package curl ca-certificates git openssl
+  install_package curl ca-certificates git openssl unzip
 }
 
 clone_repo() {
@@ -122,6 +125,49 @@ clone_repo() {
   else
     git clone --depth 1 "${repo_url}" "${dest}"
   fi
+}
+
+is_prebuilt_project_dir() {
+  dir="$1"
+  [ -f "${dir}/package.json" ] \
+    && [ -f "${dir}/apps/api/dist/main.js" ] \
+    && [ -f "${dir}/dist/user-web/index.html" ] \
+    && [ -f "${dir}/dist/admin-web/index.html" ]
+}
+
+is_project_dir() {
+  dir="$1"
+  [ -f "${dir}/package.json" ] && [ -d "${dir}/apps" ] && [ -d "${dir}/packages" ] && [ -d "${dir}/prisma" ]
+}
+
+find_project_root() {
+  base_dir="$1"
+  if is_project_dir "${base_dir}"; then
+    printf "%s" "${base_dir}"
+    return 0
+  fi
+  found="$(find "${base_dir}" -mindepth 1 -maxdepth 2 -type f -name package.json -print -quit 2>/dev/null || true)"
+  [ -n "${found}" ] || return 1
+  candidate="$(dirname "${found}")"
+  is_project_dir "${candidate}" || return 1
+  printf "%s" "${candidate}"
+}
+
+download_prebuilt_package() {
+  dest="$1"
+  [ -n "${PACKAGE_URL}" ] || return 1
+
+  archive="${dest}/package.zip"
+  extract_dir="${dest}/package"
+  mkdir -p "${extract_dir}"
+
+  log "Downloading prebuilt package: ${PACKAGE_URL}" >&2
+  curl -fL --retry 2 --connect-timeout 15 -o "${archive}" "${PACKAGE_URL}" || return 1
+  unzip -q "${archive}" -d "${extract_dir}" || return 1
+
+  project_root="$(find_project_root "${extract_dir}")" || return 1
+  is_prebuilt_project_dir "${project_root}" || return 1
+  printf "%s" "${project_root}"
 }
 
 load_existing_env_defaults() {
@@ -189,10 +235,10 @@ detect_server_ip() {
 }
 
 resolve_public_url() {
-  if [ -n "${PUBLIC_WEB_URL:-}" ]; then
-    printf "%s" "${PUBLIC_WEB_URL}"
-  elif [ -n "${DOMAIN}" ]; then
+  if [ -n "${DOMAIN}" ] && ! is_no "${ENABLE_NGINX}"; then
     if is_no "${ENABLE_HTTPS}"; then printf "http://%s" "${DOMAIN}"; else printf "https://%s" "${DOMAIN}"; fi
+  elif [ -n "${PUBLIC_WEB_URL:-}" ]; then
+    printf "%s" "${PUBLIC_WEB_URL}"
   else
     printf "http://%s:%s" "$(detect_server_ip)" "${PORT}"
   fi
@@ -274,10 +320,35 @@ install_app_files() {
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   mkdir -p "${APP_DIR}"
 
-  if [ -f "${SCRIPT_DIR}/package.json" ] && [ -d "${SCRIPT_DIR}/apps" ] && [ -d "${SCRIPT_DIR}/packages" ]; then
+  if is_project_dir "${SCRIPT_DIR}"; then
+    if is_prebuilt_project_dir "${SCRIPT_DIR}"; then
+      INSTALL_SOURCE_USED="local-prebuilt"
+    else
+      INSTALL_SOURCE_USED="local-source"
+    fi
     if [ "${SCRIPT_DIR}" != "${APP_DIR}" ]; then
       find "${APP_DIR}" -mindepth 1 -maxdepth 1 ! -name '.env' -exec rm -rf {} +
-      find "${SCRIPT_DIR}" -mindepth 1 -maxdepth 1 ! -name '.env' ! -name 'node_modules' ! -name 'dist' -exec cp -a {} "${APP_DIR}/" \;
+      find "${SCRIPT_DIR}" -mindepth 1 -maxdepth 1 ! -name '.env' ! -name 'node_modules' -exec cp -a {} "${APP_DIR}/" \;
+    fi
+  elif [ "${INSTALL_SOURCE}" != "source" ] && [ -n "${PACKAGE_URL}" ]; then
+    tmp_dir="$(mktemp -d)"
+    if project_root="$(download_prebuilt_package "${tmp_dir}")"; then
+      find "${APP_DIR}" -mindepth 1 -maxdepth 1 ! -name '.env' -exec rm -rf {} +
+      cp -a "${project_root}/." "${APP_DIR}/"
+      rm -rf "${tmp_dir}"
+      INSTALL_SOURCE_USED="prebuilt-package"
+    else
+      rm -rf "${tmp_dir}"
+      if [ "${INSTALL_SOURCE}" = "prebuilt" ]; then
+        die "Prebuilt package download or validation failed: ${PACKAGE_URL}"
+      fi
+      log "Prebuilt package is unavailable; falling back to source deployment"
+      tmp_dir="$(mktemp -d)"
+      clone_repo "${DEFAULT_REPO_URL}" "${tmp_dir}/app"
+      find "${APP_DIR}" -mindepth 1 -maxdepth 1 ! -name '.env' -exec rm -rf {} +
+      cp -a "${tmp_dir}/app/." "${APP_DIR}/"
+      rm -rf "${tmp_dir}"
+      INSTALL_SOURCE_USED="source-repo"
     fi
   elif [ -n "${DEFAULT_REPO_URL}" ]; then
     tmp_dir="$(mktemp -d)"
@@ -285,9 +356,12 @@ install_app_files() {
     find "${APP_DIR}" -mindepth 1 -maxdepth 1 ! -name '.env' -exec rm -rf {} +
     cp -a "${tmp_dir}/app/." "${APP_DIR}/"
     rm -rf "${tmp_dir}"
+    INSTALL_SOURCE_USED="source-repo"
   else
-    die "Project files not found and DEFAULT_REPO_URL is empty"
+    die "Project files not found, PACKAGE_URL is unavailable and DEFAULT_REPO_URL is empty"
   fi
+
+  log "Project source: ${INSTALL_SOURCE_USED:-unknown}"
 }
 
 write_env_file() {
@@ -310,7 +384,6 @@ PUBLIC_WEB_URL=${public_url}
 ADMIN_PATH=/admin
 
 DATABASE_URL=${DATABASE_URL}
-REDIS_URL=${REDIS_URL:-}
 
 JWT_SECRET=${JWT_SECRET:-$(random_hex)}
 SESSION_SECRET=${SESSION_SECRET:-$(random_hex)}
@@ -384,7 +457,7 @@ write_service() {
   cat > "${SERVICE_FILE}" <<SERVICE
 [Unit]
 Description=Shiye API Service
-After=network.target mysql.service mariadb.service redis.service
+After=network.target mysql.service mariadb.service
 
 [Service]
 Type=simple
@@ -451,11 +524,7 @@ select_access_mode() {
   INSTALL_NGINX_SELECTED=0
   INSTALL_HTTPS_SELECTED=0
 
-  if is_yes "${ENABLE_NGINX}"; then
-    INSTALL_NGINX_SELECTED=1
-  elif is_no "${ENABLE_NGINX}"; then
-    INSTALL_NGINX_SELECTED=0
-  elif ask_yes_no "Use domain access with Nginx? Choose no for IP + port access" "$([ -n "${DOMAIN}" ] && echo yes || echo no)"; then
+  if is_yes "${ENABLE_NGINX}" || { [ -n "${DOMAIN}" ] && ! is_no "${ENABLE_NGINX}"; }; then
     INSTALL_NGINX_SELECTED=1
   fi
 
@@ -463,6 +532,7 @@ select_access_mode() {
     ENABLE_NGINX="no"
     ENABLE_HTTPS="no"
     log "Access mode: IP + port, for example http://SERVER_IP:${PORT}/"
+    log "Domain/Nginx/HTTPS can be configured later from the shiye management menu."
     return
   fi
 
@@ -508,42 +578,15 @@ server {
   listen 80;
   server_name ${DOMAIN};
 
-  root ${APP_DIR}/dist/user-web;
-  index index.html;
-
-  location = /api { return 301 /api/; }
-
-  location /api/ {
-    proxy_pass http://127.0.0.1:${PORT}/api/;
+  location / {
+    proxy_pass http://127.0.0.1:${PORT};
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
-  }
-
-  location = /admin { return 301 /admin/; }
-
-  location /admin/assets/ {
-    alias ${APP_DIR}/dist/admin-web/assets/;
-    try_files \$uri =404;
-    expires 1y;
-    add_header Cache-Control "public, immutable";
-  }
-
-  location /admin/ {
-    alias ${APP_DIR}/dist/admin-web/;
-    try_files \$uri \$uri/ /admin/index.html;
-  }
-
-  location /assets/ {
-    try_files \$uri =404;
-    expires 1y;
-    add_header Cache-Control "public, immutable";
-  }
-
-  location / {
-    try_files \$uri \$uri/ /index.html;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
   }
 }
 NGINX
@@ -593,6 +636,8 @@ PORT="\${PORT:-${PORT}}"
 MYSQL_DATABASE="\${MYSQL_DATABASE:-${MYSQL_DATABASE}}"
 MYSQL_USER="\${MYSQL_USER:-${MYSQL_USER}}"
 DEFAULT_REPO_URL="\${DEFAULT_REPO_URL:-${DEFAULT_REPO_URL}}"
+PACKAGE_URL="\${PACKAGE_URL:-${PACKAGE_URL}}"
+INSTALL_SOURCE="\${INSTALL_SOURCE:-${INSTALL_SOURCE}}"
 INSTALL_URL="\${INSTALL_URL:-${INSTALL_URL}}"
 UNINSTALL_URL="\${UNINSTALL_URL:-${UNINSTALL_URL}}"
 
@@ -662,7 +707,7 @@ set_env_value() {
 }
 
 run_remote_install() {
-  env_args=(APP_NAME="\${APP_NAME}" APP_DIR="\${APP_DIR}" PORT="\${PORT}" DEFAULT_REPO_URL="\${DEFAULT_REPO_URL}")
+  env_args=(APP_NAME="\${APP_NAME}" APP_DIR="\${APP_DIR}" PORT="\${PORT}" DEFAULT_REPO_URL="\${DEFAULT_REPO_URL}" PACKAGE_URL="\${PACKAGE_URL}" INSTALL_SOURCE="\${INSTALL_SOURCE}")
   if [ "\$#" -gt 0 ]; then env_args+=("\$@"); fi
   log "开始安装/更新管理面板"
   curl -fsSL "\${INSTALL_URL}" | env "\${env_args[@]}" bash
@@ -711,8 +756,8 @@ remove_domain_access() {
 
 rebuild_project() {
   echo "精简部署目录默认不保留前后端源码。"
-  echo "此操作会重新拉取最新代码、执行迁移、重新构建并重启服务，保留 .env 和数据库。"
-  if ask_yes_no "确认继续重新构建/更新" "yes"; then
+  echo "此操作会优先拉取预构建包，失败时回退源码构建；会保留 .env 和数据库。"
+  if ask_yes_no "确认继续更新/重装运行文件" "yes"; then
     run_remote_install
   fi
 }
@@ -869,7 +914,7 @@ menu() {
 5. 查看运行日志
 6. 配置域名/Nginx/HTTPS
 7. 取消域名，仅使用 IP + 端口
-8. 重新构建前后端
+8. 更新/重装运行文件
 9. 执行数据库迁移
 10. 备份数据库和 .env
 11. 卸载项目
@@ -930,7 +975,7 @@ main() {
   log "Writing .env"
   write_env_file
 
-  log "Installing dependencies, migrating database and building"
+  log "Installing dependencies, migrating database and verifying runtime"
   install_dependencies_and_build
 
   log "Verifying runtime files"
@@ -960,7 +1005,8 @@ main() {
     if [ "${INSTALL_HTTPS_SELECTED:-0}" -eq 1 ]; then base_url="https://${DOMAIN}"; fi
   else
     echo
-    echo "Nginx/domain access was not enabled. Open port ${PORT} in the server firewall/security group, or rerun with DOMAIN and ENABLE_NGINX=yes."
+    echo "Domain/Nginx access was not configured during installation."
+    echo "Open port ${PORT} in the server firewall/security group, or run 'shiye' and choose option 6 to configure domain/HTTPS."
   fi
 
   admin_password="$(grep -E '^DEFAULT_ADMIN_PASSWORD=' "${APP_DIR}/.env" | tail -n 1 | cut -d= -f2-)"

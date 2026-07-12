@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { z } from 'zod';
-import { balanceAdjustSchema, customerUpsertSchema } from '@shiye/shared';
+import { balanceAdjustSchema, customerListQuerySchema, customerUpsertSchema } from '@shiye/shared';
 import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -9,16 +9,37 @@ import { PrismaService } from '../prisma/prisma.service.js';
 export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list() {
+  async list(query: z.infer<typeof customerListQuerySchema>) {
+    const page = query.page;
+    const pageSize = query.pageSize;
+    const keyword = query.keyword?.trim();
+    const where: Prisma.CustomerWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      ...buildBalanceFilter(query.balanceMin, query.balanceMax),
+      ...(keyword ? {
+        OR: [
+          { name: { contains: keyword } },
+          { loginUsername: { contains: keyword } },
+          { email: { contains: keyword } },
+          { phone: { contains: keyword } },
+          { remark: { contains: keyword } },
+          { nodes: { some: { xuiEmail: { contains: keyword } } } },
+          { nodes: { some: { serviceNode: { name: { contains: keyword } } } } },
+          { nodes: { some: { serviceNode: { server: { name: { contains: keyword } } } } } }
+        ]
+      } : {})
+    };
     const [items, total] = await this.prisma.$transaction([
       this.prisma.customer.findMany({
+        where,
         orderBy: { createdAt: 'desc' },
-        take: 20,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
         select: customerSelect
       }),
-      this.prisma.customer.count()
+      this.prisma.customer.count({ where })
     ]);
-    return { items, page: 1, pageSize: 20, total };
+    return { items, page, pageSize, total };
   }
 
   async create(input: z.infer<typeof customerUpsertSchema>) {
@@ -157,4 +178,14 @@ const customerSelect = {
 
 function randomPassword() {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+}
+
+function buildBalanceFilter(balanceMin?: number, balanceMax?: number): Pick<Prisma.CustomerWhereInput, 'balance'> {
+  if (balanceMin === undefined && balanceMax === undefined) return {};
+  return {
+    balance: {
+      ...(balanceMin === undefined ? {} : { gte: new Prisma.Decimal(balanceMin) }),
+      ...(balanceMax === undefined ? {} : { lte: new Prisma.Decimal(balanceMax) })
+    }
+  };
 }

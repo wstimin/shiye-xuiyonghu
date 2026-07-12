@@ -86,6 +86,7 @@ const saving = ref(false);
 const syncingConfigIds = ref<Set<string>>(new Set());
 const syncingTrafficLimitIds = ref<Set<string>>(new Set());
 const resettingTrafficIds = ref<Set<string>>(new Set());
+const togglingIds = ref<Set<string>>(new Set());
 const error = ref('');
 const searchQuery = ref('');
 const editingId = ref('');
@@ -242,6 +243,26 @@ async function removeNode(node: ServiceNode) {
   await loadNodes();
 }
 
+async function toggleNodeEnabled(node: ServiceNode, enabled: boolean | string | number) {
+  const nextEnabled = Boolean(enabled);
+  const previous = node.enabled;
+  togglingIds.value = new Set(togglingIds.value).add(node.id);
+  error.value = '';
+  try {
+    await api(`/api/admin/service-nodes/${node.id}`, { method: 'PATCH', body: { enabled: nextEnabled } });
+    node.enabled = nextEnabled;
+    ElMessage.success(nextEnabled ? '路由节点已启用' : '路由节点已停用');
+  } catch (err) {
+    node.enabled = previous;
+    error.value = err instanceof Error ? err.message : '更新路由节点状态失败';
+    ElMessage.error(error.value);
+  } finally {
+    const next = new Set(togglingIds.value);
+    next.delete(node.id);
+    togglingIds.value = next;
+  }
+}
+
 async function showDeleteResult(result: DeleteServiceNodeResult) {
   const remoteClient = result.remoteInboundCleanup?.remoteClientCleanup || result.remoteClientCleanup;
   await ElMessageBox.alert([
@@ -367,48 +388,44 @@ onMounted(loadNodes);
       </el-input>
       <span class="filter-summary">显示 {{ filteredNodes.length }} / {{ nodes.length }}</span>
     </div>
-    <el-table :data="filteredNodes" v-loading="loading" style="width: 100%">
-      <el-table-column prop="name" label="名称" min-width="140" />
-      <el-table-column label="面板连接" min-width="140">
-        <template #default="{ row }: { row: ServiceNode }">{{ row.server?.name || '-' }}</template>
-      </el-table-column>
-      <el-table-column prop="inboundId" label="入站 ID" width="100" />
-      <el-table-column label="远端方式" width="110">
-        <template #default="{ row }: { row: ServiceNode }"><el-tag :type="row.config?.remoteManaged ? 'success' : 'info'">{{ remoteModeLabel(row) }}</el-tag></template>
-      </el-table-column>
-      <el-table-column prop="protocol" label="节点类型" width="110" />
-      <el-table-column label="传输安全" width="120">
-        <template #default="{ row }: { row: ServiceNode }">{{ row.config?.encryption || 'none' }}</template>
-      </el-table-column>
-      <el-table-column prop="priceMonthly" label="月价格" width="100" />
-      <el-table-column prop="trafficLimitGb" label="流量 GB" width="100" />
-      <el-table-column label="出站中转" min-width="190">
-        <template #default="{ row }: { row: ServiceNode }">
-          <span v-if="row.config?.socksRelayEnabled">{{ socksLabel(row.config.socksNodeId) }}</span>
-          <span v-else class="muted-text">未启用</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }: { row: ServiceNode }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template>
-      </el-table-column>
-      <el-table-column label="操作" width="440" fixed="right">
-        <template #default="{ row }: { row: ServiceNode }">
-          <div class="row-actions row-actions-split">
-            <div class="row-action-group remote-action">
-              <span class="action-group-label">远端同步</span>
-              <el-button size="small" :loading="syncingConfigIds.has(row.id)" :disabled="!row.inboundId" @click="syncRemoteConfig(row)"><UploadCloud :size="15" />出站</el-button>
-              <el-button size="small" :loading="syncingTrafficLimitIds.has(row.id)" :disabled="!row.inboundId" @click="syncTrafficLimit(row)"><Gauge :size="15" />流量额度</el-button>
-              <el-button size="small" :loading="resettingTrafficIds.has(row.id)" :disabled="!row.inboundId" @click="resetRemoteTraffic(row)"><RotateCcw :size="15" />重置流量</el-button>
-            </div>
-            <div class="row-action-group manage-action">
-              <span class="action-group-label">管理</span>
-              <el-button size="small" @click="editNode(row)"><Edit3 :size="15" />编辑</el-button>
-              <el-button size="small" type="danger" plain @click="removeNode(row)"><Trash2 :size="15" />删除</el-button>
-            </div>
+    <div v-loading="loading" class="entity-card-grid node-card-grid">
+      <article v-for="node in filteredNodes" :key="node.id" class="entity-card node-card">
+        <div class="entity-card-head">
+          <div>
+            <strong>{{ node.name }}</strong>
+            <span>{{ node.server?.name || '-' }} · 入站 ID {{ node.inboundId ?? '-' }}</span>
           </div>
-        </template>
-      </el-table-column>
-    </el-table>
+          <div class="tag-stack">
+            <el-switch v-model="node.enabled" size="small" :loading="togglingIds.has(node.id)" @change="(value: boolean | string | number) => toggleNodeEnabled(node, value)" />
+            <el-tag size="small" :type="node.config?.remoteManaged ? 'success' : 'info'">{{ remoteModeLabel(node) }}</el-tag>
+          </div>
+        </div>
+        <div class="entity-card-stats">
+          <div><span>协议</span><strong>{{ node.protocol }}</strong></div>
+          <div><span>安全</span><strong>{{ node.config?.encryption || 'none' }}</strong></div>
+          <div><span>月价格</span><strong>{{ node.priceMonthly }}</strong></div>
+          <div><span>流量</span><strong>{{ node.trafficLimitGb }} GB</strong></div>
+        </div>
+        <div class="entity-card-meta">
+          <span>出站中转：{{ node.config?.socksRelayEnabled ? socksLabel(node.config.socksNodeId) : '未启用' }}</span>
+          <span v-if="node.remark">{{ node.remark }}</span>
+        </div>
+        <div class="entity-card-actions split-card-actions">
+          <div class="row-action-group remote-action">
+            <span class="action-group-label">远端同步</span>
+            <el-button size="small" :loading="syncingConfigIds.has(node.id)" :disabled="!node.inboundId" @click="syncRemoteConfig(node)"><UploadCloud :size="15" />出站</el-button>
+            <el-button size="small" :loading="syncingTrafficLimitIds.has(node.id)" :disabled="!node.inboundId" @click="syncTrafficLimit(node)"><Gauge :size="15" />流量额度</el-button>
+            <el-button size="small" :loading="resettingTrafficIds.has(node.id)" :disabled="!node.inboundId" @click="resetRemoteTraffic(node)"><RotateCcw :size="15" />重置流量</el-button>
+          </div>
+          <div class="row-action-group manage-action">
+            <span class="action-group-label">管理</span>
+            <el-button size="small" @click="editNode(node)"><Edit3 :size="15" />编辑</el-button>
+            <el-button size="small" type="danger" plain @click="removeNode(node)"><Trash2 :size="15" />删除</el-button>
+          </div>
+        </div>
+      </article>
+      <div v-if="!filteredNodes.length && !loading" class="empty-panel entity-empty">暂无路由节点</div>
+    </div>
   </div>
 
   <el-dialog v-model="dialogVisible" :title="editingId ? '编辑路由节点' : '添加路由节点'" width="min(920px, 94vw)" destroy-on-close>

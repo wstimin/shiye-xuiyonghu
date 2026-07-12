@@ -302,14 +302,17 @@ export class NodesService {
       ? await this.xui.syncServiceNodeRemoteConfig(id, { removeOnly: true })
       : { skipped: true, reason: 'service node has no inbound ID' };
     const remoteInboundCleanup = await this.xui.deleteManagedServiceNodeInbound(id);
+    const localImportedSocksCleanup = await this.cleanupLocalImportedSocksNodeForServiceNode(id, current.config);
     const customerNodes = await this.prisma.customerNode.findMany({ where: { serviceNodeId: id }, select: { id: true } });
     const customerNodeIds = customerNodes.map((node) => node.id);
-    await this.prisma.$transaction([
+    const cleanupActions: Prisma.PrismaPromise<unknown>[] = [
       this.prisma.renewalLog.updateMany({ where: { customerNodeId: { in: customerNodeIds } }, data: { customerNodeId: null } }),
       this.prisma.customerNode.deleteMany({ where: { serviceNodeId: id } }),
       this.prisma.serviceNode.delete({ where: { id } })
-    ]);
-    return { deleted: true, id, remoteClientCleanup, remoteConfigCleanup, remoteInboundCleanup };
+    ];
+    if (localImportedSocksCleanup.deleteSocksNodeId) cleanupActions.push(this.prisma.socksNode.delete({ where: { id: localImportedSocksCleanup.deleteSocksNodeId } }));
+    await this.prisma.$transaction(cleanupActions);
+    return { deleted: true, id, remoteClientCleanup, remoteConfigCleanup, remoteInboundCleanup, localImportedSocksCleanup };
   }
 
   async syncServiceNodeTrafficLimit(id: string) {
@@ -385,12 +388,16 @@ export class NodesService {
   }
 
   async deleteSocksNode(id: string) {
-    await this.ensureSocksNode(id);
+    const node = await this.ensureSocksNode(id);
     const serviceNodes = await this.prisma.serviceNode.findMany({ select: { id: true, name: true, config: true } });
     const used = serviceNodes.find((node) => jsonObject(node.config).socksNodeId === id);
     if (used) throw new BadRequestException(`Socks 节点正在被服务节点“${used.name}”使用，请先关闭或更换该服务节点的 Socks 中转`);
+    let remoteDelete: unknown = null;
+    if (node.sourceServerId && node.remoteOutboundTag) {
+      remoteDelete = await this.xui.deleteRemoteSocksOutbound(node.sourceServerId, node.remoteOutboundTag);
+    }
     await this.prisma.socksNode.delete({ where: { id } });
-    return { deleted: true, id };
+    return { deleted: true, id, remoteDelete };
   }
 
   async listUserNodes(customerId: string) {
@@ -578,8 +585,9 @@ export class NodesService {
   }
 
   private async ensureSocksNode(id: string) {
-    const exists = await this.prisma.socksNode.findUnique({ where: { id }, select: { id: true } });
+    const exists = await this.prisma.socksNode.findUnique({ where: { id }, select: { id: true, sourceServerId: true, remoteOutboundTag: true } });
     if (!exists) throw new NotFoundException('Socks node not found');
+    return exists;
   }
 
   private async serviceNodesUsingSocksNode(id: string) {
@@ -588,6 +596,47 @@ export class NodesService {
       const config = jsonObject(node.config) as ServiceNodeConfig;
       return Boolean(config.socksRelayEnabled && config.socksNodeId === id);
     });
+  }
+
+  private async cleanupLocalImportedSocksNodeForServiceNode(serviceNodeId: string, serviceNodeConfig: unknown) {
+    const config = jsonObject(serviceNodeConfig) as ServiceNodeConfig;
+    const socksNodeId = stringValue(config.socksNodeId);
+    if (!socksNodeId) return { deleted: false, skipped: true, reason: 'service node has no Socks node binding' };
+
+    const socksNode = await this.prisma.socksNode.findUnique({
+      where: { id: socksNodeId },
+      select: { id: true, name: true, sourceServerId: true, remoteOutboundTag: true }
+    });
+    if (!socksNode) return { deleted: false, skipped: true, reason: 'Socks node already absent', socksNodeId };
+    if (!socksNode.sourceServerId || !socksNode.remoteOutboundTag) {
+      return { deleted: false, skipped: true, reason: 'Socks node is locally created', socksNodeId, socksNodeName: socksNode.name };
+    }
+
+    const serviceNodes = await this.prisma.serviceNode.findMany({ select: { id: true, name: true, config: true } });
+    const otherUsers = serviceNodes.filter((node) => {
+      if (node.id === serviceNodeId) return false;
+      const otherConfig = jsonObject(node.config) as ServiceNodeConfig;
+      return otherConfig.socksNodeId === socksNodeId;
+    });
+    if (otherUsers.length) {
+      return {
+        deleted: false,
+        skipped: true,
+        reason: 'Socks node is still referenced by other service nodes',
+        socksNodeId,
+        socksNodeName: socksNode.name,
+        referencedBy: otherUsers.map((node) => ({ id: node.id, name: node.name }))
+      };
+    }
+
+    return {
+      deleted: true,
+      deleteSocksNodeId: socksNode.id,
+      socksNodeId: socksNode.id,
+      socksNodeName: socksNode.name,
+      sourceServerId: socksNode.sourceServerId,
+      remoteOutboundTag: socksNode.remoteOutboundTag
+    };
   }
 
   private assertShareLinkProtocol(protocol: string) {
